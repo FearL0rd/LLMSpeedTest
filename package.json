@@ -1,0 +1,31 @@
+{
+  "name": "llm-speedtest",
+  "version": "0.1.0",
+  "description": "Local LLM performance benchmarking tool",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "tauri": "tauri",
+    "mock:server": "node scripts/mock-server.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.6.0",
+    "echarts": "^5.6.0",
+    "pinia": "^2.3.1",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.6.2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11",
+    "vitest": "^3.0.5",
+    "vue-tsc": "^2.2.0"
+  }
+}

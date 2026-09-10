@@ -1,0 +1,206 @@
+# LLM Speedtest
+
+A lightweight desktop app for benchmarking **locally running LLMs** through any
+OpenAI-compatible inference server (Ollama, vLLM, llama.cpp server, LM Studio,
+SGLang…). It measures what your hardware actually delivers — prefill speed,
+decode throughput, and per-token cost — straight from the API stream, with a UI
+light enough to not steal VRAM from the model being tested.
+
+Built with **Tauri 2 (Rust)** + **Vue 3 (Composition API)** + **ECharts**.
+
+## Features
+
+### Single-run benchmarking (Benchmark tab)
+
+- **Real-time KPIs** from stream chunks and final usage payloads:
+  - **TTFT** — time to first content token.
+  - **TTFR** — time to first response chunk (any SSE data, includes network).
+  - **TPS** — decode throughput; **Peak t/s** over a trailing 1-second window
+    (robust stutter metric), plus mean/min.
+  - **PP speed** — prompt-processing (prefill) speed, `prompt_tokens ÷ est_ppt`.
+  - **TPOT** — mean time per output token.
+  - **Token audit** — `prompt_tokens` / `completion_tokens` / `total_tokens`,
+    with Ollama `prompt_eval_count` / `eval_count` fallbacks and
+    `eval_duration`-based engine cross-checks.
+- **Live speed chart** — instantaneous tokens/second per chunk, exposing
+  stutter and spikes; zoomable for long runs. Streaming response feed.
+- **Saved runs & comparison** (Compare tab) — persist runs locally, overlay
+  TPS curves, compare KPI/hardware side-by-side, import/export JSON & CSV.
+
+### Benchmark suites (Suite tab)
+
+llama-bench-style test matrices over any OpenAI-compatible endpoint:
+
+- **Matrix**: prompt-processing targets (pp), generation lengths (tg), context
+  depths (padded natural text as system message), and concurrency levels —
+  executed as depth → pp → tg, with concurrency multiplying each shape.
+- **Statistics**: configurable discarded warmup runs, measured runs, and
+  mean ± std aggregation per row.
+- **Latency adjustment**: a baseline probe (1-token generation, `/models`
+  round-trip, or off) is subtracted from TTFR to yield **est_ppt** — an
+  estimate of pure server-side prompt processing. This matters most for
+  *remote* endpoints where network round-trip would otherwise inflate TTFT.
+- **Prefix caching** — two-step measurement: context-load rows (`ctx_pp`,
+  `ctx_tg`) followed by cached-context runs at the same depth.
+- **Exact-length runs** — `min_tokens` + `ignore_eos` for fixed output length
+  (supported by vLLM, llama.cpp).
+- **Coherence check** — asks the model "2 + 2" with deterministic decoding and
+  a 64-token budget (thinking models included); flags FAILED instead of
+  silently benchmarking a broken backend.
+- **Charts** — throughput vs concurrency (saturation) and throughput vs
+  context depth. Exports: JSON (full fidelity incl. time series), CSV,
+  Markdown (llama-bench-style table).
+
+Rows are labeled like llama-bench: `pp512 @ d4096`, `tg64 @ d0 c2`,
+`ctx_pp @ d8192`. Each row's **t/s** is the metric that applies to it —
+prompt-processing speed for pp rows, decode speed for tg rows — so blank
+cells only ever mean "not applicable"; a hover tooltip on the test name shows
+the raw stream diagnostics (chunks / content chunks / usage chunks) if a
+server streams unusually.
+
+### Engine-agnostic integration
+
+- Just point it at a base URL; the endpoint is normalized automatically
+  (`http://host:port` → `…/v1/chat/completions`).
+- **Thinking-model aware** — tokens streamed as `reasoning_content` (Qwen3-style
+  thinking) or completion-style `text` count as decode work, not just
+  `delta.content`. Multi-token/block-streamed chunks are handled without
+  fabricating decode timings.
+
+### Hardware identification
+
+The OpenAI protocol carries no hardware info, so the app fills the gap:
+
+1. **Detect** probes well-known engine paths on the same port (Ollama
+   `/api/version` + `/api/ps`, vLLM `/version` + `/metrics`, llama.cpp
+   `/props`, SGLang `/get_server_info`, LM Studio `/api/v0/models`) and
+   reports engine type, version, model lists, GGUF quantization hints, and —
+   for Ollama — per-model VRAM usage.
+2. **Same-host auto-detect** — when the endpoint is `localhost`, local
+   hardware (CPU, RAM, GPU, OS) is read via Rust (`sysinfo` + WMI on Windows)
+   and auto-fills the Hardware field.
+3. **Manual hardware label** — for remote machines, type it once per endpoint;
+   it is stored with every saved run and shown in the comparison table.
+
+> **Remote endpoints:** no LLM API exposes the serving machine's hardware, and
+> a remote box can't be queried without software running there. Over the
+> network, Detect reports engine/model/VRAM info only; label the hardware
+> manually or run a metrics exporter on that machine.
+
+## How metrics are computed
+
+| Metric | Source | Fallback |
+|---|---|---|
+| TTFR | wall clock, start → first stream chunk | — |
+| TTFT | wall clock, start → first content token | — |
+| est_ppt | `TTFR − baseline latency` (min 0) | `prompt_eval_duration` shown separately |
+| PP t/s | `prompt_tokens ÷ est_ppt` | `eval_count ÷ (prompt_eval_duration / 1e9)` |
+| TPS (decode) | `completion_tokens ÷ decode wall time` | `eval_count ÷ (eval_duration / 1e9)` |
+| TPOT | `decode wall time ÷ completion_tokens` | `eval_duration ÷ eval_count` |
+| Peak t/s | max tokens/sec over any trailing 1 s window | per-chunk peak |
+| Token counts | standard `usage` in final chunk | Ollama `prompt_eval_count` / `eval_count` |
+
+The live chart estimates per-chunk tokens from payload length (chars ÷ 4);
+headline metrics always prefer server-reported counts. Suite prompt sizes are
+**calibrated against the server's own token counts** (probe → rescale loop),
+so sweeps hit their target token counts without shipping a tokenizer.
+
+## Development
+
+Prerequisites: Node 18+, Rust (MSVC toolchain on Windows), and the platform
+webview runtime (WebView2 on Windows).
+
+```bash
+npm install
+
+# unit tests (metrics engine, runner, prompts, probes, export, SSE parsing)
+npm test
+
+# typecheck + production build
+npm run typecheck
+npm run build
+
+# frontend in a plain browser (streaming falls back to fetch; Tauri-only
+# features such as hardware auto-detect are disabled)
+npm run dev
+
+# mock OpenAI-compatible SSE server for local testing (port 15201)
+npm run mock:server
+
+# full desktop app
+npm run tauri dev
+npm run tauri build
+```
+
+> **Which exe to run:** `tauri dev` produces `src-tauri/target/debug/llm-speedtest.exe`,
+> a dev build that loads the UI from the Vite dev server (port 1420) — run it
+> via `npm run tauri dev`, never standalone. The standalone app is
+> `src-tauri/target/release/llm-speedtest.exe` (~11 MB, UI embedded): build it
+> with `npm run tauri build -- --no-bundle`, then double-click it — no dev
+> server required.
+
+Mock server environment variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `15201` | Listen port |
+| `MOCK_ENGINE` | `ollama` | Probe surface: `ollama` (`/api/version`, `/api/ps`) or `llamacpp` (`/props`) |
+| `MOCK_TOKENS` | `60` | Output length (also caps `min_tokens`) |
+| `MOCK_PP_MS` | `0.15` | Simulated prefill ms per prompt token |
+| `MOCK_MODEL` | `mock-7b-instruct` | Reported model name |
+
+The mock emulates prompt-proportional prefill, sinusoidal decode stutter,
+`max_tokens`/`min_tokens`, prefix-cache hits, and answers coherence questions.
+
+Point the app at your server:
+
+| Server | Endpoint |
+|---|---|
+| Ollama | `http://localhost:11434` |
+| vLLM | `http://localhost:8000/v1` |
+| LM Studio | `http://localhost:1234` |
+| llama.cpp server | `http://localhost:8080` |
+
+## Architecture
+
+```
+src/
+  engine/
+    metrics.ts    MetricsAccumulator — TTFR/TTFT/TPOT/TPS/token accounting,
+                  peak-window stats, stream diagnostics (pure, unit-tested)
+    runner.ts     Suite orchestration: matrix execution, warmups, concurrency,
+                  prefix-cache rows, calibration, mean ± std aggregation
+    prompts.ts    Natural-text padding + server-calibrated prompt lengths
+    latency.ts    Baseline latency probes (generation / api / none)
+    probe.ts      Engine detection + system-info bridge (Detect button)
+    export.ts     JSON / CSV / Markdown serialization, download & import
+    streaming.ts  streamCompletion — Tauri invoke (reqwest, CORS-free) or
+                  browser fetch + SSE parse
+    parse.ts      chunk / SSE-line parsing
+    url.ts        endpoint normalization
+  stores/
+    benchmark.ts  single-run orchestration, live state, localStorage runs
+    suite.ts      suite config, progress, results
+  components/
+    ConfigPanel.vue     endpoint/model/prompt/hardware configuration + Detect
+    LiveRun.vue         KPI cards, live chart, response stream feed
+    SuitePanel.vue      suite matrix configuration + progress
+    SuiteResults.vue    llama-bench-style table + depth/concurrency charts
+    ComparisonView.vue  saved-run table + overlaid TPS curves + import/export
+    SpeedChart.vue      ECharts live-throughput wrapper (tree-shaken)
+    LineChart.vue       ECharts XY wrapper for suite curves
+    KpiCard.vue         single metric card used on the Benchmark tab
+src-tauri/
+  src/lib.rs      Tauri commands: stream_completion (reqwest SSE bridge via
+                  Channel), probe_endpoint (concurrent engine probes),
+                  get_system_info (sysinfo + WMI GPUs on Windows)
+scripts/
+  mock-server.mjs      mock OpenAI-compatible SSE server
+  generate-icons.mjs   icon generator (PNG + multi-size ICO, no deps)
+tests/                  Vitest unit tests for all engine modules
+```
+
+All HTTP runs through Rust (`reqwest`) inside the desktop app, so local and
+LAN servers without CORS headers work out of the box; the browser dev fallback
+uses direct `fetch` for quick iteration. Suite orchestration is executor-
+injected, so the whole matrix logic is unit-tested without a server.

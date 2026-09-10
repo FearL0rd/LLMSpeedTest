@@ -1,0 +1,55 @@
+:root {
+  --bg: #12141c;
+  --panel: #1a1d28;
+  --bg-inset: #10121a;
+  --border: #2a2e3d;
+  --text: #e6e9f0;
+  --muted: #9aa4b2;
+  --accent: #569cff;
+  --ok: #5dd39e;
+  --danger: #e56b8c;
+  --mono: 'Cascadia Code', 'Consolas', 'SF Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100%;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  min-height: 0;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2e3d;
+  border-radius: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

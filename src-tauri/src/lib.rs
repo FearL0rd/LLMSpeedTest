@@ -1,0 +1,321 @@
+use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::time::Duration;
+use sysinfo::System;
+use tauri::ipc::Channel;
+
+/// OpenAI-compatible streaming request configuration.
+///
+/// Field names use camelCase on the wire so the frontend can pass its
+/// TypeScript config object directly to `invoke("stream_completion", ...)`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamConfig {
+    pub endpoint: String,
+    pub api_key: Option<String>,
+    pub model: String,
+    pub system_prompt: Option<String>,
+    pub prompt: String,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<u32>,
+    pub min_tokens: Option<u32>,
+    pub ignore_eos: Option<bool>,
+    pub include_usage: Option<bool>,
+}
+
+/// Streams a chat completion from any OpenAI-compatible endpoint.
+///
+/// Each SSE `data:` payload is forwarded to the frontend as a raw JSON string
+/// via the provided channel; the TypeScript metrics engine owns all parsing so
+/// there is a single source of truth for metric extraction.
+///
+/// Kept crate-private: `pub` commands trigger an E0255 macro re-import
+/// conflict in the tauri command macro expansion on this toolchain.
+#[tauri::command]
+async fn stream_completion(config: StreamConfig, on_chunk: Channel<String>) -> Result<(), String> {
+    let url = normalize_endpoint(&config.endpoint);
+
+    let mut messages: Vec<Value> = Vec::new();
+    if let Some(sys) = config.system_prompt.as_deref() {
+        if !sys.trim().is_empty() {
+            messages.push(serde_json::json!({ "role": "system", "content": sys }));
+        }
+    }
+    messages.push(serde_json::json!({ "role": "user", "content": config.prompt }));
+
+    let mut body = serde_json::json!({
+        "model": config.model,
+        "messages": messages,
+        "stream": true
+    });
+    if let Some(t) = config.temperature {
+        body["temperature"] = serde_json::json!(t);
+    }
+    if let Some(m) = config.max_tokens {
+        body["max_tokens"] = serde_json::json!(m);
+    }
+    if let Some(m) = config.min_tokens {
+        body["min_tokens"] = serde_json::json!(m);
+    }
+    if let Some(e) = config.ignore_eos {
+        body["ignore_eos"] = serde_json::json!(e);
+    }
+    if config.include_usage.unwrap_or(true) {
+        body["stream_options"] = serde_json::json!({ "include_usage": true });
+    }
+
+    let client = reqwest::Client::new();
+    let mut req = client
+        .post(&url)
+        .json(&body)
+        .header("accept", "application/json");
+    if let Some(key) = config.api_key.as_deref() {
+        if !key.trim().is_empty() {
+            req = req.bearer_auth(key);
+        }
+    }
+
+    let response = req
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!("HTTP {status}: {}", truncate(&text, 500)));
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+
+    while let Some(item) = stream.next().await {
+        let bytes = item.map_err(|e| format!("Stream error: {e}"))?;
+        buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+        while let Some(nl) = buffer.find('\n') {
+            let line = buffer[..nl].trim().to_string();
+            buffer.drain(..=nl);
+
+            let Some(payload) = parse_sse_data(&line) else {
+                continue;
+            };
+            if payload == "[DONE]" {
+                return Ok(());
+            }
+            // Only forward valid JSON objects; ignore comments/keep-alives.
+            if serde_json::from_str::<Value>(&payload).is_ok() {
+                let _ = on_chunk.send(payload);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Endpoint probing: the OpenAI protocol carries no hardware info, so we probe
+// well-known engine-specific paths (same port, plain HTTP) to identify the
+// engine and its loaded models / VRAM footprint. Detection itself happens in
+// the frontend over these raw results, keeping it unit-testable.
+// ---------------------------------------------------------------------------
+
+const PROBE_PATHS: &[&str] = &[
+    "/api/version",
+    "/api/ps",
+    "/version",
+    "/props",
+    "/get_server_info",
+    "/api/v0/models",
+    "/v1/models",
+    "/metrics",
+];
+
+const PROBE_BODY_LIMIT: usize = 40_000;
+const PROBE_TIMEOUT: Duration = Duration::from_millis(2500);
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProbeResult {
+    path: String,
+    /// HTTP status, or 0 when unreachable/timed out.
+    status: u16,
+    body: Option<String>,
+}
+
+#[tauri::command]
+async fn probe_endpoint(endpoint: String, api_key: Option<String>) -> Result<Vec<ProbeResult>, String> {
+    let base = base_url(&endpoint);
+    let client = reqwest::Client::new();
+
+    let futures = PROBE_PATHS.iter().map(|path| {
+        let url = format!("{base}{path}");
+        let mut req = client.get(&url).timeout(PROBE_TIMEOUT);
+        if let Some(key) = api_key.as_deref() {
+            if !key.trim().is_empty() {
+                req = req.bearer_auth(key);
+            }
+        }
+        async move {
+            match req.send().await {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    let body = if status == 200 {
+                        resp.text().await.ok().map(|t| truncate(&t, PROBE_BODY_LIMIT))
+                    } else {
+                        None
+                    };
+                    ProbeResult {
+                        path: (*path).to_string(),
+                        status,
+                        body,
+                    }
+                }
+                Err(_) => ProbeResult {
+                    path: (*path).to_string(),
+                    status: 0,
+                    body: None,
+                },
+            }
+        }
+    });
+
+    Ok(futures_util::future::join_all(futures).await)
+}
+
+/// Strip the OpenAI path suffixes to get the server origin for probing.
+fn base_url(endpoint: &str) -> String {
+    let mut base = endpoint.trim().trim_end_matches('/').to_string();
+    if base.ends_with("/chat/completions") {
+        base.truncate(base.len() - "/chat/completions".len());
+    }
+    if base.ends_with("/v1") {
+        base.truncate(base.len() - "/v1".len());
+    }
+    base.trim_end_matches('/').to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Local hardware info: auto-fill only applies when the endpoint is served by
+// this same machine; for remote endpoints the user labels hardware manually.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemInfo {
+    os: Option<String>,
+    cpu: Option<String>,
+    cores_physical: Option<u32>,
+    cores_logical: u32,
+    total_memory_bytes: u64,
+    gpus: Vec<String>,
+}
+
+#[tauri::command]
+async fn get_system_info() -> Result<SystemInfo, String> {
+    // sysinfo calls are blocking but fast; keep them off the async executor.
+    let info = tokio::task::spawn_blocking(move || {
+        let mut sys = sysinfo::System::new_all();
+        let cpus = sys.cpus();
+        let cpu = cpus
+            .first()
+            .map(|c| c.brand().trim().to_string())
+            .filter(|s| !s.is_empty());
+        let cores_logical = cpus.len() as u32;
+        let cores_physical = sys.physical_core_count().map(|n| n as u32);
+        let total_memory_bytes = sys.total_memory();
+        let os = System::long_os_version();
+        let gpus = detect_gpus();
+
+        SystemInfo {
+            os,
+            cpu,
+            cores_physical,
+            cores_logical,
+            total_memory_bytes,
+            gpus,
+        }
+    })
+    .await
+    .map_err(|e| format!("system info task failed: {e}"))?;
+
+    Ok(info)
+}
+
+#[cfg(target_os = "windows")]
+fn detect_gpus() -> Vec<String> {
+    #[derive(serde::Deserialize)]
+    #[allow(non_snake_case)]
+    struct VideoController {
+        Name: Option<String>,
+    }
+
+    let com = match wmi::COMLibrary::new() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let conn = match wmi::WMIConnection::new(com) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let list: Vec<VideoController> = conn
+        .raw_query("SELECT Name FROM Win32_VideoController")
+        .unwrap_or_default();
+    let mut names: Vec<String> = list
+        .into_iter()
+        .filter_map(|v| v.Name)
+        .filter(|n| !n.trim().is_empty())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+#[cfg(not(target_os = "windows"))]
+fn detect_gpus() -> Vec<String> {
+    Vec::new()
+}
+
+// ---------------------------------------------------------------------------
+
+fn parse_sse_data(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("data:")?.trim();
+    if rest.is_empty() {
+        None
+    } else {
+        Some(rest.to_string())
+    }
+}
+
+/// Accepts a bare host, a `/v1` base, or a full `/chat/completions` path.
+fn normalize_endpoint(endpoint: &str) -> String {
+    let base = endpoint.trim().trim_end_matches('/');
+    if base.ends_with("/chat/completions") {
+        base.to_string()
+    } else if base.ends_with("/v1") {
+        format!("{base}/chat/completions")
+    } else {
+        format!("{base}/v1/chat/completions")
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max])
+    }
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            stream_completion,
+            probe_endpoint,
+            get_system_info
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
