@@ -122,6 +122,14 @@ export interface SystemInfo {
   coresLogical: number;
   totalMemoryBytes: number;
   gpus: string[];
+  disks: Array<{
+    name: string;
+    mountPoint: string;
+    /** "SSD" | "HDD" | "Unknown" as reported by the OS. */
+    kind: string;
+    totalBytes: number;
+    availableBytes: number;
+  }>;
 }
 
 export type RunStatus = 'idle' | 'running' | 'done' | 'error';

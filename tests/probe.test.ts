@@ -4,6 +4,7 @@ import {
   detectEngine,
   formatBytes,
   isSameHost,
+  primaryDisk,
   quantFromFilename,
   summarizeEngine,
   summarizeSystem,
@@ -140,7 +141,7 @@ describe('deriveBaseUrl / isSameHost', () => {
 });
 
 describe('summarizeSystem', () => {
-  it('joins available hardware facts', () => {
+  it('joins available hardware facts including GPU and SSD', () => {
     const info: SystemInfo = {
       os: 'Windows 11 Pro',
       cpu: 'AMD Ryzen 9 7900X',
@@ -148,13 +149,35 @@ describe('summarizeSystem', () => {
       coresLogical: 24,
       totalMemoryBytes: 68 * 1024 ** 3,
       gpus: ['NVIDIA GeForce RTX 4090'],
+      disks: [
+        { name: '/dev/sda1', mountPoint: '/', kind: 'SSD', totalBytes: 1024 ** 4, availableBytes: 250 * 1024 ** 3 },
+        { name: '/dev/sdb1', mountPoint: '/mnt', kind: 'HDD', totalBytes: 4 * 1024 ** 3, availableBytes: 1024 ** 3 },
+      ],
     };
     const s = summarizeSystem(info);
     expect(s).toContain('AMD Ryzen 9 7900X');
     expect(s).toContain('12C/24T');
     expect(s).toContain('68 GB RAM');
     expect(s).toContain('NVIDIA GeForce RTX 4090');
+    expect(s).toContain('1.0 TB SSD (250.0 GB free)');
     expect(s).toContain('Windows 11 Pro');
+  });
+
+  it('falls back to the largest disk when no SSD is present', () => {
+    const info: SystemInfo = {
+      os: null,
+      cpu: null,
+      coresPhysical: null,
+      coresLogical: 8,
+      totalMemoryBytes: 16 * 1024 ** 3,
+      gpus: [],
+      disks: [
+        { name: 'a', mountPoint: '/a', kind: 'HDD', totalBytes: 500 * 1024 ** 3, availableBytes: 0 },
+        { name: 'b', mountPoint: '/b', kind: 'HDD', totalBytes: 2 * 1024 ** 3, availableBytes: 0 },
+      ],
+    };
+    expect(primaryDisk(info)?.name).toBe('a');
+    expect(summarizeSystem(info)).toContain('500.0 GB HDD');
   });
 
   it('is empty without info', () => {

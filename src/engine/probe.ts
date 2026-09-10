@@ -244,8 +244,21 @@ export function summarizeSystem(info: SystemInfo | null): string {
   }
   parts.push(`${(info.totalMemoryBytes / 1024 ** 3).toFixed(0)} GB RAM`);
   if (info.gpus.length > 0) parts.push(info.gpus.join(' + '));
+  const disk = primaryDisk(info);
+  if (disk) {
+    const free = disk.availableBytes > 0 ? ` (${formatBytes(disk.availableBytes)} free)` : '';
+    parts.push(`${formatBytes(disk.totalBytes)} ${disk.kind}${free}`);
+  }
   if (info.os) parts.push(info.os);
   return parts.join(' · ');
+}
+
+/** The disk to advertise: largest SSD if present, else the largest disk. */
+export function primaryDisk(info: SystemInfo): SystemInfo['disks'][number] | null {
+  if (info.disks.length === 0) return null;
+  const ssds = info.disks.filter((d) => d.kind === 'SSD');
+  const pool = ssds.length > 0 ? ssds : info.disks;
+  return pool.reduce((a, b) => (b.totalBytes > a.totalBytes ? b : a));
 }
 
 /** Human-readable byte size, e.g. 3.9 GB. */

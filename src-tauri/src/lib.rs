@@ -210,6 +210,18 @@ struct SystemInfo {
     cores_logical: u32,
     total_memory_bytes: u64,
     gpus: Vec<String>,
+    disks: Vec<DiskInfo>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiskInfo {
+    name: String,
+    mount_point: String,
+    /// "SSD" | "HDD" | "Unknown" (as reported by the OS).
+    kind: String,
+    total_bytes: u64,
+    available_bytes: u64,
 }
 
 #[tauri::command]
@@ -227,6 +239,7 @@ async fn get_system_info() -> Result<SystemInfo, String> {
         let total_memory_bytes = sys.total_memory();
         let os = System::long_os_version();
         let gpus = detect_gpus();
+        let disks = detect_disks();
 
         SystemInfo {
             os,
@@ -235,12 +248,40 @@ async fn get_system_info() -> Result<SystemInfo, String> {
             cores_logical,
             total_memory_bytes,
             gpus,
+            disks,
         }
     })
     .await
     .map_err(|e| format!("system info task failed: {e}"))?;
 
     Ok(info)
+}
+
+fn detect_disks() -> Vec<DiskInfo> {
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let mut out: Vec<DiskInfo> = disks
+        .list()
+        .iter()
+        .map(|d| DiskInfo {
+            name: d.name().to_string_lossy().to_string(),
+            mount_point: d.mount_point().to_string_lossy().to_string(),
+            kind: match d.kind() {
+                sysinfo::DiskKind::SSD => "SSD".to_string(),
+                sysinfo::DiskKind::HDD => "HDD".to_string(),
+                _ => "Unknown".to_string(),
+            },
+            total_bytes: d.total_space(),
+            available_bytes: d.available_space(),
+        })
+        // Skip pseudo/loop mounts and empty entries.
+        .filter(|d| d.total_bytes > 0 && !d.name.starts_with("/dev/loop"))
+        .collect();
+
+    // Keep only the largest mount per physical disk name.
+    out.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes));
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|d| seen.insert(d.name.clone()));
+    out
 }
 
 #[cfg(target_os = "windows")]
@@ -274,6 +315,43 @@ fn detect_gpus() -> Vec<String> {
 
 #[cfg(not(target_os = "windows"))]
 fn detect_gpus() -> Vec<String> {
+    #[cfg(target_os = "linux")]
+    {
+        // pciutils is preinstalled on nearly every desktop/server distro.
+        if let Ok(out) = std::process::Command::new("lspci").output() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let mut gpus: Vec<String> = text
+                .lines()
+                .filter(|l| {
+                    l.contains("VGA compatible controller")
+                        || l.contains("3D controller")
+                        || l.contains("Display controller")
+                })
+                .filter_map(|l| l.split_once(": ").map(|(_, name)| name.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect();
+            gpus.sort();
+            gpus.dedup();
+            if !gpus.is_empty() {
+                return gpus;
+            }
+        }
+        // No lspci (or no controllers found): try the NVIDIA proc interface.
+        if let Ok(entries) = std::fs::read_dir("/proc/driver/nvidia/gpus") {
+            let mut gpus: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .filter_map(|e| std::fs::read_to_string(e.path().join("information")).ok())
+                .filter_map(|info| {
+                    info.lines()
+                        .find(|l| l.starts_with("Model:"))
+                        .map(|l| l.trim_start_matches("Model:").trim().to_string())
+                })
+                .collect();
+            gpus.sort();
+            gpus.dedup();
+            return gpus;
+        }
+    }
     Vec::new()
 }
 
