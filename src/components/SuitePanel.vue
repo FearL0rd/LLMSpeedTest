@@ -111,7 +111,8 @@ h2 {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
-input,
+input[type='text'],
+input[type='number'],
 select {
   background: var(--bg-inset);
   border: 1px solid var(--border);
@@ -123,7 +124,12 @@ select {
   width: 100%;
   box-sizing: border-box;
 }
-input:focus,
+input[type='checkbox'] {
+  width: auto;
+  accent-color: var(--accent);
+}
+input[type='text']:focus,
+input[type='number']:focus,
 select:focus {
   outline: none;
   border-color: var(--accent);

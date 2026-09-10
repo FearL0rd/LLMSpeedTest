@@ -269,7 +269,7 @@ h2 {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
-input,
+input:not([type='checkbox']),
 textarea {
   background: var(--bg-inset);
   border: 1px solid var(--border);
@@ -281,7 +281,11 @@ textarea {
   width: 100%;
   box-sizing: border-box;
 }
-input:focus,
+input[type='checkbox'] {
+  width: auto;
+  accent-color: var(--accent);
+}
+input:not([type='checkbox']):focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
