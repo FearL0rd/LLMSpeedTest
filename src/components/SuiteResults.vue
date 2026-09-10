@@ -129,7 +129,7 @@ function exportResult(format: 'json' | 'csv' | 'md'): void {
                 {{ testLabel(row) }}<template v-if="depthSuffix"> @ d{{ row.depth }}</template><template v-if="row.concurrency > 1"> c{{ row.concurrency }}</template>
               </td>
               <td class="num">{{ fmtStat(rowKindTps(row)) }}</td>
-              <td class="num">{{ fmtStat(row.stats.peakWindowTps) }}</td>
+              <td class="num">{{ fmtStat(row.kind === 'pp' || row.kind === 'ctx_pp' ? undefined : row.stats.peakWindowTps) }}</td>
               <td class="num">{{ fmtStat(row.stats.ttfrMs) }}</td>
               <td class="num">{{ fmtStat(row.stats.ttftMs) }}</td>
               <td class="num">{{ fmtStat(row.stats.estPptMs) }}</td>

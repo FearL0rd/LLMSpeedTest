@@ -284,6 +284,7 @@ export async function runSuite(
           iterations: suite.warmup + suite.runs,
           warmup: suite.warmup,
           concurrency: 1,
+          cacheBust: false, // ctx-load rows must hit the cache
           onIteration: () => {
             progress.done++;
             report(`${kind} @ d${depth} (cache load)`);
@@ -304,6 +305,7 @@ export async function runSuite(
         iterations: suite.warmup + suite.runs,
         warmup: suite.warmup,
         concurrency: 1,
+        cacheBust: !suite.prefixCaching,
         onIteration: () => {
           progress.done++;
           report(`pp${ppTarget} @ d${depth}`);
@@ -325,6 +327,7 @@ export async function runSuite(
           iterations: suite.warmup + suite.runs,
           warmup: suite.warmup,
           concurrency,
+          cacheBust: !suite.prefixCaching,
           onIteration: () => {
             progress.done += concurrency;
             report(label);
@@ -365,6 +368,11 @@ interface RowOptions {
   iterations: number;
   warmup: number;
   concurrency: number;
+  /**
+   * Append a unique nonce per request so server-side prefix caching cannot
+   * serve repeated prompts (which would fake near-zero prefill times).
+   */
+  cacheBust: boolean;
   onIteration?: () => void;
 }
 
@@ -399,7 +407,9 @@ async function runRow(
       config: {
         ...config,
         systemPrompt: opts.systemText || undefined,
-        prompt: opts.promptText || '.',
+        prompt: opts.cacheBust
+          ? `${opts.promptText} [${i}.${k}.${Math.random().toString(36).slice(2, 10)}]`
+          : opts.promptText || '.',
         maxTokens: opts.maxTokens,
       },
     }));

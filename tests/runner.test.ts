@@ -178,6 +178,32 @@ describe('runSuite', () => {
     void result;
   }, 30000);
 
+  it('busts the prompt cache per request unless prefix caching is measured', async () => {
+    const { executor, calls } = makeScriptedExecutor(50);
+    await runSuite(baseConfig, { ...smallSuite, coherence: false }, {}, undefined, executor);
+
+    // Default (cache-busting on): every measured prompt is unique.
+    const tgPrompts = calls
+      .filter((c) => c.label.startsWith('tg'))
+      .map((c) => c.config.prompt);
+    expect(tgPrompts.length).toBeGreaterThan(0);
+    expect(new Set(tgPrompts).size).toBe(tgPrompts.length);
+
+    // With prefix-caching measurement on: prompts repeat so hits are measurable.
+    const second = makeScriptedExecutor(50);
+    await runSuite(
+      baseConfig,
+      { ...smallSuite, coherence: false, prefixCaching: true, depths: [256] },
+      {},
+      undefined,
+      second.executor,
+    );
+    const tg2 = second.calls.filter((c) => c.label.startsWith('tg'));
+    const prompts2 = tg2.map((c) => c.config.prompt);
+    expect(prompts2.length).toBeGreaterThan(0);
+    expect(new Set(prompts2).size).toBe(1);
+  }, 30000);
+
   it('computes mean ± std correctly', () => {
     const s = stat([10, 10, 10, 10]);
     expect(s?.mean).toBe(10);
