@@ -382,7 +382,7 @@ fn detect_gpus() -> Vec<String> {
                         || l.contains("3D controller")
                         || l.contains("Display controller")
                 })
-                .filter_map(|l| l.split_once(": ").map(|(_, name)| name.trim().to_string()))
+                .filter_map(|l| l.split_once(": ").map(|(_, name)| clean_gpu_name(name)))
                 .filter(|s| !s.is_empty())
                 .collect();
             gpus.sort();
@@ -415,6 +415,18 @@ fn detect_gpus() -> Vec<String> {
         }
     }
     Vec::new()
+}
+
+/// lspci reports e.g. "NVIDIA Corporation GP106 [GeForce GTX 1060 3GB] (rev a1)".
+/// Prefer the bracketed marketing name and drop the revision suffix.
+#[cfg(target_os = "linux")]
+fn clean_gpu_name(raw: &str) -> String {
+    let name = raw.trim();
+    let name = name.split(" (rev").next().unwrap_or(name).trim();
+    match (name.find('['), name.rfind(']')) {
+        (Some(open), Some(close)) if close > open => name[open + 1..close].trim().to_string(),
+        _ => name.to_string(),
+    }
 }
 
 /// Scan /sys/bus/pci/devices for display-class devices (VGA 0x030000,
