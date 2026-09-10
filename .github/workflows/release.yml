@@ -1,0 +1,61 @@
+# Builds Windows + Linux installers and attaches them to a draft GitHub
+# release whenever a version tag (e.g. v0.1.0) is pushed.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+          - platform: ubuntu-22.04 # 22.04 for wider glibc compatibility
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies (GTK/WebKit)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev build-essential pkg-config libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev file
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'LLM Speedtest ${{ github.ref_name }}'
+          releaseBody: 'Installers for Windows (MSI/NSIS) and Linux (deb/rpm/AppImage). The portable Windows exe is attached as llm-speedtest-windows-portable.zip.'
+          releaseDraft: true
+          prerelease: false
+
+      - name: Zip portable Windows exe
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: Compress-Archive -Path src-tauri/target/release/llm-speedtest.exe -DestinationPath llm-speedtest-windows-portable.zip
+
+      - name: Attach portable exe to the draft release
+        if: matrix.platform == 'windows-latest'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: llm-speedtest-windows-portable.zip
