@@ -32,7 +32,8 @@ const BASE_METRICS = {
 
 function makeRow(overrides: Partial<SuiteRow> = {}): SuiteRow {
   return {
-    key: 'tg64@d0',
+    key: 'tg64@d0:c1',
+    label: 'tg64 (c1)',
     kind: 'tg',
     ppTarget: 512,
     tgCount: 64,
@@ -57,7 +58,18 @@ const suiteResult = {
   latencyMs: 98.9,
   latencyMode: 'generation',
   coherenceOk: true,
-  rows: [makeRow(), makeRow({ key: 'pp512@d0', kind: 'pp' as const, tgCount: 1 })],
+  rows: [makeRow(), makeRow({
+    key: 'pp512@d0:c1',
+    label: 'pp512 (c1)',
+    kind: 'pp' as const,
+    tgCount: 1,
+    stats: {
+      tps: { mean: 0.8, std: 0.05, min: 0.7, max: 0.9, n: 2 },
+      ttfrMs: { mean: 186.83, std: 9.46, min: 177, max: 196, n: 2 },
+      ppTps: { mean: 5821, std: 0, min: 5821, max: 5821, n: 2 },
+      estPptMs: { mean: 87.96, std: 0, min: 87.96, max: 87.96, n: 2 },
+    },
+  })],
   config: {
     ppTargets: [512],
     tgCounts: [64],
@@ -72,20 +84,23 @@ const suiteResult = {
 };
 
 describe('suiteToMarkdown', () => {
-  it('renders a header with metadata and one line per row', () => {
+  it('renders llama-benchy columns with metadata header and one line per row', () => {
     const md = suiteToMarkdown(suiteResult as never);
     expect(md).toContain('# Benchmark — Mock run (mock-7b)');
     expect(md).toContain('latency mode: generation (98.9 ms baseline)');
     expect(md).toContain('coherence: OK');
-    expect(md).toContain('| tg64 @ d0 |');
-    expect(md).toContain('| pp512 @ d0 |');
+    expect(md).toContain(
+      '| test | t/s (total) | t/s (req) | peak t/s | peak t/s (req) | ttfr (ms) | est_ppt (ms) | e2e_ttft (ms) | tpot (ms) |',
+    );
+    expect(md).toContain('| tg64 (c1) |');
+    expect(md).toContain('| pp512 (c1) |');
     expect(md).toContain('13.33 ± 0.45');
   });
 
-  it('shows the pp speed for pp rows in the t/s column', () => {
+  it('reports prompt-processing speed for pp rows in the t/s columns', () => {
     const md = suiteToMarkdown(suiteResult as never);
     const ppLine = md.split('\n').find((l) => l.startsWith('| pp512'));
-    expect(ppLine).toContain('|  |'); // decode t/s blank for pp rows
+    expect(ppLine).toContain('5821.00 ± 0.00');
   });
 });
 
@@ -95,8 +110,10 @@ describe('suiteToCsv', () => {
     const lines = csv.split('\n');
     expect(lines).toHaveLength(3);
     expect(lines[0]).toContain('test,kind,depth,pp_target,tg_count,concurrency,n,tps_mean,tps_std');
-    expect(lines[1]).toContain('tg64 @ d0,tg,0,512,64,1,2,13.330,0.450');
-    expect(lines[2]).toContain('pp512 @ d0,pp,0,512,1,1,2');
+    expect(lines[1]).toContain('tg64 (c1),tg,0,512,64,1,2,13.330,0.450');
+    expect(lines[2]).toContain('pp512 (c1),pp,0,512,1,1,2');
+    // pp rows report prompt-processing speed in the per-request tps columns.
+    expect(lines[2]).toContain('5821.000');
   });
 });
 

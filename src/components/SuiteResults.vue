@@ -2,25 +2,22 @@
 import { computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useSuiteStore } from '../stores/suite';
-import { fmtStat, download, suiteToCsv, suiteToMarkdown } from '../engine/export';
+import {
+  fmtStat,
+  download,
+  suiteToCsv,
+  suiteToMarkdown,
+  rowReqTps,
+  rowTotalTps,
+  rowPeakTps,
+  rowPeakTpsTotal,
+} from '../engine/export';
 import LineChart from './LineChart.vue';
 
 const store = useSuiteStore();
 const { result } = storeToRefs(store);
 
 const rows = computed(() => result.value?.rows ?? []);
-
-function testLabel(row: (typeof rows.value)[number]): string {
-  if (row.kind === 'pp') return `pp${row.ppTarget}`;
-  if (row.kind === 'tg') return `tg${row.tgCount}`;
-  if (row.kind === 'ctx_pp') return 'ctx_pp';
-  return 'ctx_tg';
-}
-
-/** pp rows report prompt-processing speed; tg rows report decode speed. */
-function rowKindTps(row: (typeof rows.value)[number]) {
-  return row.kind === 'pp' || row.kind === 'ctx_pp' ? row.stats.ppTps : row.stats.tps;
-}
 
 /** Hover diagnostics: explains blank cells when a server streams oddly. */
 function diagTitle(row: (typeof rows.value)[number]): string {
@@ -31,18 +28,13 @@ function diagTitle(row: (typeof rows.value)[number]): string {
     (d.contentChunks === 0 ? ' — server sent no token content; decode metrics unavailable' : '');
 }
 
-const depthSuffix = computed(() => {
-  const depths = new Set(rows.value.map((r) => r.depth));
-  return depths.size > 1 || (depths.has(0) === false && depths.size > 0);
-});
-
 /** tg tps / pp tps vs depth — the llama-bench signature curves. */
 const depthSeries = computed(() => {
   const r = result.value;
   if (!r) return [];
   const byDepth = new Map<number, typeof rows.value>();
   for (const row of r.rows) {
-    if (row.concurrency !== 1) continue;
+    if (row.concurrency !== 1 || row.kind === 'ctx_pp' || row.kind === 'ctx_tg') continue;
     const list = byDepth.get(row.depth) ?? [];
     list.push(row);
     byDepth.set(row.depth, list);
@@ -114,27 +106,27 @@ function exportResult(format: 'json' | 'csv' | 'md'): void {
           <thead>
             <tr>
               <th>Test</th>
-              <th class="num">t/s</th>
-              <th class="num">Peak t/s (1s)</th>
-              <th class="num">TTFR (ms)</th>
-              <th class="num">TTFT (ms)</th>
+              <th class="num">t/s (total)</th>
+              <th class="num">t/s (req)</th>
+              <th class="num">peak t/s</th>
+              <th class="num">peak t/s (req)</th>
+              <th class="num">ttfr (ms)</th>
               <th class="num">est_ppt (ms)</th>
-              <th class="num">TPOT (ms)</th>
-              <th v-if="concurrencySeries.length > 0" class="num">Total t/s</th>
+              <th class="num">e2e_ttft (ms)</th>
+              <th class="num">tpot (ms)</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="row in rows" :key="row.key" :data-testid="`row-${row.kind}`">
-              <td class="label-cell" :title="diagTitle(row)">
-                {{ testLabel(row) }}<template v-if="depthSuffix"> @ d{{ row.depth }}</template><template v-if="row.concurrency > 1"> c{{ row.concurrency }}</template>
-              </td>
-              <td class="num">{{ fmtStat(rowKindTps(row)) }}</td>
-              <td class="num">{{ fmtStat(row.kind === 'pp' || row.kind === 'ctx_pp' ? undefined : row.stats.peakWindowTps) }}</td>
+              <td class="label-cell" :title="diagTitle(row)">{{ row.label }}</td>
+              <td class="num">{{ fmtStat(rowTotalTps(row)) }}</td>
+              <td class="num">{{ fmtStat(rowReqTps(row)) }}</td>
+              <td class="num">{{ fmtStat(rowPeakTpsTotal(row)) }}</td>
+              <td class="num">{{ fmtStat(rowPeakTps(row)) }}</td>
               <td class="num">{{ fmtStat(row.stats.ttfrMs) }}</td>
-              <td class="num">{{ fmtStat(row.stats.ttftMs) }}</td>
               <td class="num">{{ fmtStat(row.stats.estPptMs) }}</td>
+              <td class="num">{{ fmtStat(row.stats.ttftMs) }}</td>
               <td class="num">{{ fmtStat(row.stats.tpotMs) }}</td>
-              <td v-if="concurrencySeries.length > 0" class="num">{{ fmtStat(row.totalTps ?? undefined) }}</td>
             </tr>
           </tbody>
         </table>

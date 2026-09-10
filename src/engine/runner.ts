@@ -20,6 +20,8 @@ export interface Stat {
 
 export interface SuiteRow {
   key: string;
+  /** Human-readable test label in llama-benchy style, e.g. "pp2048 @ d4096 (c2)". */
+  label: string;
   kind: TestKind;
   ppTarget: number;
   tgCount: number;
@@ -111,13 +113,19 @@ function aggregate(runs: RunMetrics[]): Record<string, Stat> {
   return out;
 }
 
-/** Apply latency adjustment to a finished run (est_ppt, prompt-processing tps). */
-export function applyLatencyAdjustment(m: RunMetrics, latencyMs: number | null): RunMetrics {
+/** Apply latency adjustment to a finished run (est_ppt, prompt-processing tps).
+ *  `cachedPrefixTokens` subtracts context served from the server's prefix
+ *  cache so pp rates reflect only the newly processed tokens. */
+export function applyLatencyAdjustment(
+  m: RunMetrics,
+  latencyMs: number | null,
+  cachedPrefixTokens = 0,
+): RunMetrics {
   if (m.ttfrMs === null || latencyMs === null) return m;
   const estPptMs = Math.max(0, m.ttfrMs - latencyMs);
   const ppTps =
     estPptMs > 0 && m.promptTokens !== null && m.promptTokens > 0
-      ? m.promptTokens / (estPptMs / 1000)
+      ? Math.max(1, m.promptTokens - cachedPrefixTokens) / (estPptMs / 1000)
       : null;
   return { ...m, estPptMs, ppTps };
 }
@@ -212,14 +220,16 @@ export async function runSuite(
 ): Promise<SuiteResult> {
   const progress = { done: 0 };
   // Progress denominator matches the actual tick accounting exactly:
-  // pp rows always run one request per iteration; tg rows run `concurrency`.
+  // every row runs one request per concurrent slot per iteration.
   const iterations = suite.warmup + suite.runs;
   let estimatedTotal = 0;
-  for (const _depth of suite.depths) {
+  for (const depth of suite.depths) {
     estimatedTotal += 1; // depth calibration tick
-    if (suite.prefixCaching) estimatedTotal += 2 * iterations; // ctx load rows
-    estimatedTotal += suite.ppTargets.length * iterations;
+    if (suite.prefixCaching && depth > 0) {
+      estimatedTotal += 2 * suite.concurrencyLevels.length * iterations; // ctx load rows
+    }
     for (const c of suite.concurrencyLevels) {
+      estimatedTotal += suite.ppTargets.length * iterations * c;
       estimatedTotal += suite.tgCounts.length * iterations * c;
     }
   }
@@ -250,14 +260,29 @@ export async function runSuite(
   const calibrateCtx = async (depth: number): Promise<number> => {
     const cached = ctxCharsCache.get(depth);
     if (cached !== undefined) return cached;
-    const chars = depth > 0 ? await calibratePromptChars(ctxProbe, depth) : 0;
+    let chars = depth > 0 ? depth * 4 : 0;
+    if (depth > 0) {
+      try {
+        chars = await calibratePromptChars(ctxProbe, depth);
+      } catch {
+        // Server rejected the probe (e.g. depth exceeds its context): fall
+        // back to the 4 chars/token heuristic so the suite still completes.
+      }
+    }
     ctxCharsCache.set(depth, chars);
     return chars;
   };
   const calibratePrompt = async (target: number): Promise<number> => {
     const cached = promptCharsCache.get(target);
     if (cached !== undefined) return cached;
-    const chars = target > 0 ? await calibratePromptChars(promptProbe, target) : 0;
+    let chars = target > 0 ? target * 4 : 0;
+    if (target > 0) {
+      try {
+        chars = await calibratePromptChars(promptProbe, target);
+      } catch {
+        // Heuristic fallback keeps the rest of the suite running.
+      }
+    }
     promptCharsCache.set(target, chars);
     return chars;
   };
@@ -268,58 +293,68 @@ export async function runSuite(
     report(`Calibrating context @ depth ${depth}`);
     const ctxChars = await calibrateCtx(depth);
     const systemText = depth > 0 ? buildContextText(ctxChars, !suite.prefixCaching) : '';
+    // With prefix caching on, the shared system context is served from the
+    // server's cache; pp rates must count only the newly processed tokens.
+    const cachedPrefixTokens = suite.prefixCaching && depth > 0 ? Math.round(systemText.length / 4) : 0;
 
-    // Prefix-caching measurement: load the context first (ctx_* rows), then
-    // subsequent rows at this depth run against the cached context.
-    if (suite.prefixCaching && depth > 0) {
-      for (const [kind, tg] of [
-        ['ctx_pp', 1],
-        ['ctx_tg', 8],
-      ] as const) {
-        const row = blankRow(kind, 0, tg, depth, 1);
+    // Matrix order mirrors llama-benchy: per (depth, concurrency) run
+    // ctx-load rows (depth > 0), then pp, then tg.
+    for (const concurrency of suite.concurrencyLevels) {
+      // Prefix-caching measurement: load the context first (ctx_* rows), then
+      // subsequent rows at this depth run against the cached context.
+      if (suite.prefixCaching && depth > 0) {
+        for (const [kind, tg] of [
+          ['ctx_pp', 1],
+          ['ctx_tg', suite.tgCounts[0] ?? 8],
+        ] as const) {
+          const row = blankRow(kind, 0, tg, depth, concurrency);
+          await runRow(config, row, {
+            systemText,
+            promptText: '.',
+            maxTokens: tg,
+            iterations: suite.warmup + suite.runs,
+            warmup: suite.warmup,
+            concurrency,
+            cacheBust: false, // ctx-load rows must hit the cache
+            tpsTokens: 'prompt',
+            cachedPrefixTokens: 0, // ctx rows measure loading the full context
+            onIteration: () => {
+              progress.done += concurrency;
+              report(`${row.label} — cache load`);
+            },
+          }, signal, executor, latencyMs);
+          rows.push(row);
+          handlers.onRow?.(row);
+        }
+      }
+
+      for (const ppTarget of suite.ppTargets) {
+        const promptChars = await calibratePrompt(ppTarget);
+        const row = blankRow('pp', ppTarget, 1, depth, concurrency);
         await runRow(config, row, {
           systemText,
-          promptText: '.',
-          maxTokens: tg,
+          promptText: textForTokens(Math.ceil(promptChars / 4)),
+          maxTokens: 1,
           iterations: suite.warmup + suite.runs,
           warmup: suite.warmup,
-          concurrency: 1,
-          cacheBust: false, // ctx-load rows must hit the cache
+          concurrency,
+          // Repeated identical prompts let the server's prefix cache fake
+          // near-zero prefill times — bust it on every measured request.
+          cacheBust: true,
+          tpsTokens: 'prompt',
+          cachedPrefixTokens,
           onIteration: () => {
-            progress.done++;
-            report(`${kind} @ d${depth} (cache load)`);
+            progress.done += concurrency;
+            report(row.label);
           },
         }, signal, executor, latencyMs);
         rows.push(row);
         handlers.onRow?.(row);
       }
-    }
 
-    for (const ppTarget of suite.ppTargets) {
-      const promptChars = await calibratePrompt(ppTarget);
-      const row = blankRow('pp', ppTarget, 1, depth, 1);
-      await runRow(config, row, {
-        systemText,
-        promptText: textForTokens(Math.ceil(promptChars / 4)),
-        maxTokens: 1,
-        iterations: suite.warmup + suite.runs,
-        warmup: suite.warmup,
-        concurrency: 1,
-        cacheBust: !suite.prefixCaching,
-        onIteration: () => {
-          progress.done++;
-          report(`pp${ppTarget} @ d${depth}`);
-        },
-      }, signal, executor, latencyMs);
-      rows.push(row);
-      handlers.onRow?.(row);
-    }
-
-    for (const tgCount of suite.tgCounts) {
-      for (const concurrency of suite.concurrencyLevels) {
+      for (const tgCount of suite.tgCounts) {
         const promptChars = await calibratePrompt(suite.ppTargets[0] ?? 64);
         const row = blankRow('tg', suite.ppTargets[0] ?? 64, tgCount, depth, concurrency);
-        const label = `tg${tgCount} @ d${depth}${concurrency > 1 ? ` c${concurrency}` : ''}`;
         await runRow(tgShapeConfig(config, suite, tgCount), row, {
           systemText,
           promptText: textForTokens(Math.ceil(promptChars / 4)),
@@ -327,10 +362,12 @@ export async function runSuite(
           iterations: suite.warmup + suite.runs,
           warmup: suite.warmup,
           concurrency,
-          cacheBust: !suite.prefixCaching,
+          cacheBust: true,
+          tpsTokens: 'completion',
+          cachedPrefixTokens,
           onIteration: () => {
             progress.done += concurrency;
-            report(label);
+            report(row.label);
           },
         }, signal, executor, latencyMs);
         rows.push(row);
@@ -373,12 +410,18 @@ interface RowOptions {
    * serve repeated prompts (which would fake near-zero prefill times).
    */
   cacheBust: boolean;
+  /** Which token count drives aggregate t/s: prompt tokens for pp rows, completion tokens for tg rows. */
+  tpsTokens: 'prompt' | 'completion';
+  /** Tokens already served from the server's prefix cache; excluded from pp rates. */
+  cachedPrefixTokens: number;
   onIteration?: () => void;
 }
 
 function blankRow(kind: TestKind, pp: number, tg: number, depth: number, concurrency: number): SuiteRow {
+  const shape = kind === 'pp' ? `pp${pp}` : kind === 'tg' ? `tg${tg}` : kind;
   return {
-    key: `${kind}${pp > 0 ? pp : ''}${kind === 'tg' ? tg : ''}@d${depth}${concurrency > 1 ? ` c${concurrency}` : ''}`,
+    key: `${shape}@d${depth}:c${concurrency}`,
+    label: `${shape}${depth > 0 ? ` @ d${depth}` : ''} (c${concurrency})`,
     kind,
     ppTarget: pp,
     tgCount: tg,
@@ -425,12 +468,15 @@ async function runRow(
     const ok = results.filter((r): r is RunMetrics => r !== null);
     const span = performance.now() - t0;
     if (opts.concurrency > 1 && ok.length > 0 && span > 0) {
-      const tokens = ok.reduce((a, m) => a + (m.completionTokens ?? 0), 0);
+      const tokens = ok.reduce(
+        (a, m) => a + (opts.tpsTokens === 'prompt' ? m.promptTokens ?? 0 : m.completionTokens ?? 0),
+        0,
+      );
       if (tokens > 0) totalTpsSamples.push((tokens / span) * 1000);
     }
     // Discard the first `warmup` iterations.
     if (i >= opts.warmup) {
-      for (const m of ok) row.runs.push(applyLatencyAdjustment(m, latencyMs));
+      for (const m of ok) row.runs.push(applyLatencyAdjustment(m, latencyMs, opts.cachedPrefixTokens));
     }
     opts.onIteration?.();
   }

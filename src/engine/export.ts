@@ -10,26 +10,46 @@ export function fmtStat(s: Stat | undefined, digits = 2): string {
   return `${s.mean.toFixed(digits)} ± ${s.std.toFixed(digits)}`;
 }
 
-function rowTestLabel(row: SuiteRow): string {
-  if (row.kind === 'pp') return `pp${row.ppTarget} @ d${row.depth}`;
-  if (row.kind === 'tg') return `tg${row.tgCount} @ d${row.depth}${row.concurrency > 1 ? ` (c${row.concurrency})` : ''}`;
-  if (row.kind === 'ctx_pp') return `ctx_pp @ d${row.depth}`;
-  return `ctx_tg @ d${row.depth}`;
+export function rowTestLabel(row: SuiteRow): string {
+  return row.label;
+}
+
+/** Per-request throughput: prompt-processing speed for pp rows, decode speed for tg rows. */
+export function rowReqTps(row: SuiteRow): Stat | undefined {
+  return (row.kind === 'pp' || row.kind === 'ctx_pp' ? row.stats.ppTps : row.stats.tps) ?? undefined;
+}
+
+/** Aggregate throughput across concurrent requests; falls back to the per-request rate at c1. */
+export function rowTotalTps(row: SuiteRow): Stat | undefined {
+  if (row.totalTps) return row.totalTps;
+  return row.concurrency === 1 ? rowReqTps(row) : undefined;
+}
+
+/** Peak 1-second-window decode speed (per request; blank for pp rows). */
+export function rowPeakTps(row: SuiteRow): Stat | undefined {
+  return row.kind === 'tg' || row.kind === 'ctx_tg' ? row.stats.peakWindowTps ?? undefined : undefined;
+}
+
+/** Combined peak is only measurable where requests do not overlap (c1). */
+export function rowPeakTpsTotal(row: SuiteRow): Stat | undefined {
+  return row.concurrency === 1 ? rowPeakTps(row) : undefined;
 }
 
 export function suiteToMarkdown(result: SuiteResult): string {
   const head =
-    '| test | t/s | peak t/s | pp t/s | ttfr (ms) | e2e ttft (ms) | est_ppt (ms) |\n' +
-    '|:-----|----:|---------:|-------:|----------:|--------------:|-------------:|';
+    '| test | t/s (total) | t/s (req) | peak t/s | peak t/s (req) | ttfr (ms) | est_ppt (ms) | e2e_ttft (ms) | tpot (ms) |\n' +
+    '|:------------------------|---------------:|--------------:|-----------:|-----------------:|-----------:|-------------:|----------------:|-----------:|';
   const lines = result.rows.map((row) => {
     const cells = [
       rowTestLabel(row),
-      fmtStat(row.stats.tps),
-      fmtStat(row.stats.peakWindowTps),
-      fmtStat(row.stats.ppTps),
+      fmtStat(rowTotalTps(row)),
+      fmtStat(rowReqTps(row)),
+      fmtStat(rowPeakTpsTotal(row)),
+      fmtStat(rowPeakTps(row)),
       fmtStat(row.stats.ttfrMs),
-      fmtStat(row.stats.ttftMs),
       fmtStat(row.stats.estPptMs),
+      fmtStat(row.stats.ttftMs),
+      fmtStat(row.stats.tpotMs),
     ];
     return `| ${cells.join(' | ')} |`;
   });
@@ -58,12 +78,14 @@ export function suiteToCsv(result: SuiteResult): string {
     'tps_mean',
     'tps_std',
     'peak_tps_mean',
-    'pp_tps_mean',
     'ttfr_ms_mean',
     'ttft_ms_mean',
     'est_ppt_ms_mean',
+    'tpot_ms_mean',
     'total_tps_mean',
+    'total_tps_std',
   ].join(',');
+  const req = (row: SuiteRow) => rowReqTps(row);
   const lines = result.rows.map((row) =>
     [
       rowTestLabel(row),
@@ -72,15 +94,16 @@ export function suiteToCsv(result: SuiteResult): string {
       row.ppTarget,
       row.tgCount,
       row.concurrency,
-      row.stats.tps?.n ?? 0,
-      row.stats.tps?.mean.toFixed(3) ?? '',
-      row.stats.tps?.std.toFixed(3) ?? '',
-      row.stats.peakWindowTps?.mean.toFixed(3) ?? '',
-      row.stats.ppTps?.mean.toFixed(3) ?? '',
+      req(row)?.n ?? 0,
+      req(row)?.mean.toFixed(3) ?? '',
+      req(row)?.std.toFixed(3) ?? '',
+      rowPeakTps(row)?.mean.toFixed(3) ?? '',
       row.stats.ttfrMs?.mean.toFixed(2) ?? '',
       row.stats.ttftMs?.mean.toFixed(2) ?? '',
       row.stats.estPptMs?.mean.toFixed(2) ?? '',
+      row.stats.tpotMs?.mean.toFixed(3) ?? '',
       row.totalTps?.mean.toFixed(3) ?? '',
+      row.totalTps?.std.toFixed(3) ?? '',
     ].join(','),
   );
   return [header, ...lines].join('\n');

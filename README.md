@@ -33,9 +33,10 @@ llama-bench-style test matrices over any OpenAI-compatible endpoint:
 
 - **Matrix**: prompt-processing targets (pp), generation lengths (tg), context
   depths (padded natural text as system message), and concurrency levels —
-  executed as depth → pp → tg, with concurrency multiplying each shape.
-  Defaults mirror llama-benchy: `pp2048`, `tg32`, depth `0`, concurrency `1`,
-  1 warmup + 3 measured runs, coherence check on.
+  executed as depth → concurrency → ctx/pp/tg, matching llama-benchy's row
+  order. Defaults mirror llama-benchy: `pp2048`, `tg32`, depth `0, 4096`,
+  concurrency `1, 2`, 1 warmup + 3 measured runs, coherence check on, exact
+  generation lengths and prefix-caching measurement enabled.
 - **Statistics**: configurable discarded warmup runs, measured runs, and
   mean ± std aggregation per row.
 - **Latency adjustment**: a baseline probe (1-token generation, `/models`
@@ -53,9 +54,11 @@ llama-bench-style test matrices over any OpenAI-compatible endpoint:
   context depth. Exports: JSON (full fidelity incl. time series), CSV,
   Markdown (llama-bench-style table).
 
-Rows are labeled like llama-bench: `pp512 @ d4096`, `tg64 @ d0 c2`,
-`ctx_pp @ d8192`. Each row's **t/s** is the metric that applies to it —
-prompt-processing speed for pp rows, decode speed for tg rows — so blank
+Rows are labeled like llama-benchy: `pp2048 (c1)`, `tg32 @ d4096 (c2)`,
+`ctx_pp @ d4096 (c1)`. Each row reports **t/s (total)** (aggregate across
+concurrent requests) and **t/s (req)** (per-request speed — prompt-processing
+for pp rows, decode for tg rows), plus peak 1-second-window decode speed,
+ttfr, est_ppt, e2e_ttft, and tpot — so blank
 cells only ever mean "not applicable"; a hover tooltip on the test name shows
 the raw stream diagnostics (chunks / content chunks / usage chunks) if a
 server streams unusually.

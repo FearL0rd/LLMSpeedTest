@@ -178,18 +178,24 @@ describe('runSuite', () => {
     void result;
   }, 30000);
 
-  it('busts the prompt cache per request unless prefix caching is measured', async () => {
+  it('busts the prompt cache on every measured row; only ctx-load rows repeat', async () => {
     const { executor, calls } = makeScriptedExecutor(50);
     await runSuite(baseConfig, { ...smallSuite, coherence: false }, {}, undefined, executor);
 
-    // Default (cache-busting on): every measured prompt is unique.
+    // Plain rows always bust the cache: every measured prompt is unique.
     const tgPrompts = calls
       .filter((c) => c.label.startsWith('tg'))
       .map((c) => c.config.prompt);
     expect(tgPrompts.length).toBeGreaterThan(0);
     expect(new Set(tgPrompts).size).toBe(tgPrompts.length);
+    const ppPrompts = calls
+      .filter((c) => c.label.startsWith('pp'))
+      .map((c) => c.config.prompt);
+    expect(ppPrompts.length).toBeGreaterThan(0);
+    expect(new Set(ppPrompts).size).toBe(ppPrompts.length);
 
-    // With prefix-caching measurement on: prompts repeat so hits are measurable.
+    // With prefix-caching measurement on: plain rows still bust the cache;
+    // only the ctx-load rows repeat the identical prompt so hits are measurable.
     const second = makeScriptedExecutor(50);
     await runSuite(
       baseConfig,
@@ -201,7 +207,60 @@ describe('runSuite', () => {
     const tg2 = second.calls.filter((c) => c.label.startsWith('tg'));
     const prompts2 = tg2.map((c) => c.config.prompt);
     expect(prompts2.length).toBeGreaterThan(0);
-    expect(new Set(prompts2).size).toBe(1);
+    expect(new Set(prompts2).size).toBe(prompts2.length);
+    const ctxPrompts = second.calls
+      .filter((c) => c.label.startsWith('ctx_'))
+      .map((c) => c.config.prompt);
+    expect(ctxPrompts.length).toBeGreaterThan(0);
+    expect(new Set(ctxPrompts).size).toBe(1);
+  }, 30000);
+
+  it('runs pp rows at every concurrency level with unique keys and labels', async () => {
+    const { executor } = makeScriptedExecutor(50);
+    const suite: SuiteConfig = { ...smallSuite, coherence: false, concurrencyLevels: [1, 2] };
+    const result = await runSuite(baseConfig, suite, {}, undefined, executor);
+
+    const ppRows = result.rows.filter((r) => r.kind === 'pp');
+    expect(ppRows.map((r) => r.concurrency)).toEqual([1, 2]);
+    expect(ppRows.map((r) => r.label)).toEqual(['pp128 (c1)', 'pp128 (c2)']);
+    const keys = new Set(result.rows.map((r) => r.key));
+    expect(keys.size).toBe(result.rows.length);
+
+    // c2 pp row aggregates prompt-token throughput across both slots.
+    const c2 = ppRows.find((r) => r.concurrency === 2)!;
+    expect(c2.totalTps?.mean).toBeGreaterThan(0);
+    // Measured runs: 2 iterations x 2 concurrent requests (warmup discarded).
+    expect(c2.runs).toHaveLength(suite.runs * 2);
+  }, 30000);
+
+  it('excludes cached prefix tokens from pp rates when measuring prefix caching', async () => {
+    const { executor } = makeScriptedExecutor(50);
+    const suite: SuiteConfig = { ...smallSuite, coherence: false, prefixCaching: true, depths: [256] };
+    const result = await runSuite(baseConfig, suite, {}, undefined, executor);
+
+    const pp = result.rows.find((r) => r.kind === 'pp')!;
+    const promptTokens = pp.stats.promptTokens?.mean ?? 0;
+    expect(promptTokens).toBeGreaterThan(256); // ~256 ctx + ~128 prompt
+    // pp tps x est_ppt must reconstruct only the newly processed tokens (~128).
+    const newTokens = ((pp.stats.ppTps?.mean ?? 0) * (pp.stats.estPptMs?.mean ?? 0)) / 1000;
+    expect(newTokens).toBeCloseTo(promptTokens - 256, 0);
+    // ctx-load rows measure the full context (no subtraction).
+    const ctxPp = result.rows.find((r) => r.kind === 'ctx_pp')!;
+    const ctxTokens = ((ctxPp.stats.ppTps?.mean ?? 0) * (ctxPp.stats.estPptMs?.mean ?? 0)) / 1000;
+    expect(ctxTokens).toBeCloseTo(ctxPp.stats.promptTokens?.mean ?? -1, 0);
+  }, 30000);
+
+  it('does not count context-load rows at depth 0 in the progress total', async () => {
+    const { executor } = makeScriptedExecutor(50);
+    const events: Array<{ done: number; total: number; label: string }> = [];
+    const suite: SuiteConfig = { ...smallSuite, coherence: false, prefixCaching: true, concurrencyLevels: [1, 2] };
+    const result = await runSuite(baseConfig, suite, { onProgress: (p) => events.push(p) }, undefined, executor);
+
+    const last = events[events.length - 1];
+    // 1 calibration + pp (3x1 + 3x2) + tg (3x1 + 3x2) = 19; no ctx rows at depth 0.
+    expect(last.total).toBe(19);
+    expect(last.done).toBe(19);
+    expect(result.rows.every((r) => r.kind !== 'ctx_pp' && r.kind !== 'ctx_tg')).toBe(true);
   }, 30000);
 
   it('computes mean ± std correctly', () => {
