@@ -87,6 +87,37 @@ The OpenAI protocol carries no hardware info, so the app fills the gap:
 > network, Detect reports engine/model/VRAM info only; label the hardware
 > manually or run a metrics exporter on that machine.
 
+## Installation
+
+There are no prebuilt downloads — build once on the target machine (see
+[Development](#development) for the one-time toolchain setup), then install:
+
+### Windows
+
+```powershell
+npm run tauri build -- --no-bundle   # standalone exe, UI embedded
+.\src-tauri\target\release\llm-speedtest.exe
+```
+
+Run the exe directly (no dev server needed), or build full installers
+(MSI/NSIS) with `npm run tauri build` — they land in
+`src-tauri\target\release\bundle\`.
+
+### Linux
+
+A full `npm run tauri build` produces packages under
+`src-tauri/target/release/bundle/`:
+
+| Artifact | Distros | Install / run |
+|---|---|---|
+| `…_amd64.deb` | Debian / Ubuntu / Mint | `sudo apt install "./LLM Speedtest_0.1.0_amd64.deb"` |
+| `…x86_64.rpm` | Fedora / RHEL / openSUSE | `sudo dnf install ./LLM\ Speedtest-0.1.0-1.x86_64.rpm` |
+| `…_amd64.AppImage` | Any distro, no install | `chmod +x` the file and run it (needs `libfuse2` on some distros) |
+
+Launch **LLM Speedtest** from the applications menu, or run `llm-speedtest`
+from a terminal. Uninstall with `sudo apt remove llm-speedtest` (deb) or your
+package manager's equivalent.
+
 ## How metrics are computed
 
 | Metric | Source | Fallback |
@@ -186,15 +217,8 @@ Notes:
   folder copied from Windows loses Unix exec permissions (`vite: Permission
   denied`) and contains Windows-native binaries. On each OS run a fresh
   `rm -rf node_modules && npm install`.
-
-A full `npm run tauri build` (without `--no-bundle`) also packages installers
-under `src-tauri/target/release/bundle/`:
-
-| Artifact | Target | Install / run |
-|---|---|---|
-| `…_amd64.deb` | Debian / Ubuntu | `sudo apt install ./LLM\ Speedtest_0.1.0_amd64.deb` |
-| `…x86_64.rpm` | Fedora / RHEL / openSUSE | `sudo dnf install ./LLM\ Speedtest-0.1.0-1.x86_64.rpm` |
-| `…_amd64.AppImage` | Any distro, no install | `chmod +x` the file and run it (`libfuse2` needed on some distros) |
+- Installers produced by the full build are covered in
+  [Installation](#installation).
 
 ```bash
 npm install
