@@ -34,6 +34,8 @@ llama-bench-style test matrices over any OpenAI-compatible endpoint:
 - **Matrix**: prompt-processing targets (pp), generation lengths (tg), context
   depths (padded natural text as system message), and concurrency levels —
   executed as depth → pp → tg, with concurrency multiplying each shape.
+  Defaults mirror llama-benchy: `pp2048`, `tg32`, depth `0`, concurrency `1`,
+  1 warmup + 3 measured runs, coherence check on.
 - **Statistics**: configurable discarded warmup runs, measured runs, and
   mean ± std aggregation per row.
 - **Latency adjustment**: a baseline probe (1-token generation, `/models`

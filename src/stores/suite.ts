@@ -5,15 +5,16 @@ import type { SuiteConfig, SuiteProgress, SuiteResult } from '../engine/runner';
 import type { StreamConfig } from '../types';
 import { useBenchmarkStore } from './benchmark';
 
-const SUITE_KEY = 'llm-speedtest.suiteConfig.v1';
+const SUITE_KEY = 'llm-speedtest.suiteConfig.v2';
 
+/** Defaults mirror llama-benchy: pp2048, tg32, 1 warmup + 3 runs, coherence on. */
 function defaultSuiteConfig(): SuiteConfig {
   return {
-    ppTargets: [512],
-    tgCounts: [64],
+    ppTargets: [2048],
+    tgCounts: [32],
     depths: [0],
     concurrencyLevels: [1],
-    runs: 2,
+    runs: 3,
     warmup: 1,
     exactTg: false,
     prefixCaching: false,
@@ -69,8 +70,8 @@ export const useSuiteStore = defineStore('suite', () => {
   }
 
   function syncLists(): void {
-    suiteConfig.ppTargets = parseList(ppText.value, [512]);
-    suiteConfig.tgCounts = parseList(tgText.value, [64]);
+    suiteConfig.ppTargets = parseList(ppText.value, [2048]);
+    suiteConfig.tgCounts = parseList(tgText.value, [32]);
     suiteConfig.depths = parseList(depthText.value, [0]);
     suiteConfig.concurrencyLevels = parseList(concText.value, [1]);
     persistConfig();
