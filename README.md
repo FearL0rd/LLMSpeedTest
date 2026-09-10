@@ -77,8 +77,17 @@ The OpenAI protocol carries no hardware info, so the app fills the gap:
    reports engine type, version, model lists, GGUF quantization hints, and —
    for Ollama — per-model VRAM usage.
 2. **Same-host auto-detect** — when the endpoint is `localhost`, local
-   hardware (CPU, RAM, GPU, OS) is read via Rust (`sysinfo` + WMI on Windows)
-   and auto-fills the Hardware field.
+   hardware is read via Rust and auto-fills the Hardware field. Reported:
+   CPU model + cores, RAM, disks with **SSD/HDD classification** and free
+   space, GPUs, and OS. Sources: `sysinfo` for CPU/RAM/disks (with a
+   `/proc/mounts` + `statvfs` fallback on Linux), WMI `Win32_VideoController`
+   for GPUs on Windows, and `lspci` → sysfs PCI scan → NVIDIA `/proc` on
+   Linux (no `pciutils` required). Example auto-filled label:
+
+   `AMD Ryzen 5 3600 6-Core Processor · 6C/12T · 126 GB RAM · GeForce RTX 3090 · 953.9 GB SSD (412 GB free) · Linux (Ubuntu 24.04)`
+
+   The frontend tolerates legacy/partial payloads, so older binaries degrade
+   gracefully instead of erroring.
 3. **Manual hardware label** — for remote machines, type it once per endpoint;
    it is stored with every saved run and shown in the comparison table.
 
