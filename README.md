@@ -362,3 +362,8 @@ All HTTP runs through Rust (`reqwest`) inside the desktop app, so local and
 LAN servers without CORS headers work out of the box; the browser dev fallback
 uses direct `fetch` for quick iteration. Suite orchestration is executor-
 injected, so the whole matrix logic is unit-tested without a server.
+
+## License
+
+First-party code in this repository is licensed under the **Apache License,
+Version 2.0** — see [`LICENSE`](LICENSE).
