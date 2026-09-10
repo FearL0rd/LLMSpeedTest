@@ -180,6 +180,21 @@ describe('summarizeSystem', () => {
     expect(summarizeSystem(info)).toContain('500.0 GB HDD');
   });
 
+  it('tolerates legacy payloads missing the disks field', () => {
+    const legacy: SystemInfo = {
+      os: 'Linux',
+      cpu: 'Intel i7',
+      coresPhysical: 8,
+      coresLogical: 16,
+      totalMemoryBytes: 32 * 1024 ** 3,
+      gpus: [],
+      disks: undefined as unknown as SystemInfo['disks'],
+    };
+    expect(() => summarizeSystem(legacy)).not.toThrow();
+    expect(primaryDisk(legacy)).toBeNull();
+    expect(summarizeSystem(legacy)).toContain('32 GB RAM');
+  });
+
   it('is empty without info', () => {
     expect(summarizeSystem(null)).toBe('');
   });

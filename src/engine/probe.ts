@@ -243,7 +243,7 @@ export function summarizeSystem(info: SystemInfo | null): string {
     parts.push(`${info.coresPhysical}C/${info.coresLogical}T`);
   }
   parts.push(`${(info.totalMemoryBytes / 1024 ** 3).toFixed(0)} GB RAM`);
-  if (info.gpus.length > 0) parts.push(info.gpus.join(' + '));
+  for (const gpu of info.gpus ?? []) parts.push(gpu);
   const disk = primaryDisk(info);
   if (disk) {
     const free = disk.availableBytes > 0 ? ` (${formatBytes(disk.availableBytes)} free)` : '';
@@ -253,11 +253,15 @@ export function summarizeSystem(info: SystemInfo | null): string {
   return parts.join(' · ');
 }
 
-/** The disk to advertise: largest SSD if present, else the largest disk. */
+/**
+ * The disk to advertise: largest SSD if present, else the largest disk.
+ * Tolerates legacy binaries that omit the disks field entirely.
+ */
 export function primaryDisk(info: SystemInfo): SystemInfo['disks'][number] | null {
-  if (info.disks.length === 0) return null;
-  const ssds = info.disks.filter((d) => d.kind === 'SSD');
-  const pool = ssds.length > 0 ? ssds : info.disks;
+  const disks = info.disks ?? [];
+  if (disks.length === 0) return null;
+  const ssds = disks.filter((d) => d.kind === 'SSD');
+  const pool = ssds.length > 0 ? ssds : disks;
   return pool.reduce((a, b) => (b.totalBytes > a.totalBytes ? b : a));
 }
 
