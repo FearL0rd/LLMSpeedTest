@@ -187,6 +187,15 @@ Notes:
   denied`) and contains Windows-native binaries. On each OS run a fresh
   `rm -rf node_modules && npm install`.
 
+A full `npm run tauri build` (without `--no-bundle`) also packages installers
+under `src-tauri/target/release/bundle/`:
+
+| Artifact | Target | Install / run |
+|---|---|---|
+| `…_amd64.deb` | Debian / Ubuntu | `sudo apt install ./LLM\ Speedtest_0.1.0_amd64.deb` |
+| `…x86_64.rpm` | Fedora / RHEL / openSUSE | `sudo dnf install ./LLM\ Speedtest-0.1.0-1.x86_64.rpm` |
+| `…_amd64.AppImage` | Any distro, no install | `chmod +x` the file and run it (`libfuse2` needed on some distros) |
+
 ```bash
 npm install
 
