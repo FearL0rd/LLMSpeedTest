@@ -24,5 +24,8 @@ sysinfo = "0.33"
 [target.'cfg(windows)'.dependencies]
 wmi = "0.14"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [features]
 custom-protocol = ["tauri/custom-protocol"]

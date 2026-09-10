@@ -228,7 +228,7 @@ struct DiskInfo {
 async fn get_system_info() -> Result<SystemInfo, String> {
     // sysinfo calls are blocking but fast; keep them off the async executor.
     let info = tokio::task::spawn_blocking(move || {
-        let mut sys = sysinfo::System::new_all();
+        let sys = sysinfo::System::new_all();
         let cpus = sys.cpus();
         let cpu = cpus
             .first()
@@ -281,7 +281,62 @@ fn detect_disks() -> Vec<DiskInfo> {
     out.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes));
     let mut seen = std::collections::HashSet::new();
     out.retain(|d| seen.insert(d.name.clone()));
+
+    if out.is_empty() {
+        out = detect_disks_fallback();
+    }
     out
+}
+
+/// Linux fallback: parse /proc/mounts for real filesystems and statvfs them.
+/// Used when the sysinfo disk list comes back empty.
+#[cfg(target_os = "linux")]
+fn detect_disks_fallback() -> Vec<DiskInfo> {
+    let Ok(mounts) = std::fs::read_to_string("/proc/mounts") else {
+        return Vec::new();
+    };
+    const REAL_FS: &[&str] = &[
+        "ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "f2fs", "jfs", "reiserfs", "ntfs3",
+        "ntfs", "vfat", "exfat",
+    ];
+
+    let mut out: Vec<DiskInfo> = Vec::new();
+    for line in mounts.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(dev), Some(mnt), Some(fstype)) = (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        if !REAL_FS.contains(&fstype) || !dev.starts_with("/dev/") {
+            continue;
+        }
+        let Ok(cpath) = std::ffi::CString::new(mnt.as_bytes()) else {
+            continue;
+        };
+        let mut stat = unsafe { std::mem::zeroed::<libc::statvfs>() };
+        // SAFETY: cpath outlives the call; stat is a valid, fully-owned buffer.
+        if unsafe { libc::statvfs(cpath.as_ptr(), &mut stat) } != 0 {
+            continue;
+        }
+        let frsize = stat.f_frsize.max(stat.f_bsize) as u64;
+        out.push(DiskInfo {
+            name: dev.to_string(),
+            mount_point: mnt.to_string(),
+            kind: "Unknown".to_string(),
+            total_bytes: stat.f_blocks * frsize,
+            available_bytes: stat.f_bavail * frsize,
+        });
+    }
+
+    out.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes));
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|d| seen.insert(d.name.clone()));
+    out
+}
+
+#[cfg(not(target_os = "linux"))]
+fn detect_disks_fallback() -> Vec<DiskInfo> {
+    Vec::new()
 }
 
 #[cfg(target_os = "windows")]
@@ -336,7 +391,14 @@ fn detect_gpus() -> Vec<String> {
                 return gpus;
             }
         }
-        // No lspci (or no controllers found): try the NVIDIA proc interface.
+
+        // Fallback: scan the PCI bus via sysfs (no external tools needed).
+        let sysfs = scan_pci_gpus_sysfs();
+        if !sysfs.is_empty() {
+            return sysfs;
+        }
+
+        // Last resort: NVIDIA proprietary driver proc interface.
         if let Ok(entries) = std::fs::read_dir("/proc/driver/nvidia/gpus") {
             let mut gpus: Vec<String> = entries
                 .filter_map(|e| e.ok())
@@ -353,6 +415,63 @@ fn detect_gpus() -> Vec<String> {
         }
     }
     Vec::new()
+}
+
+/// Scan /sys/bus/pci/devices for display-class devices (VGA 0x030000,
+/// 3D 0x030200, display 0x038000) without needing lspci installed.
+#[cfg(target_os = "linux")]
+fn scan_pci_gpus_sysfs() -> Vec<String> {
+    fn vendor_name(vendor: &str) -> &'static str {
+        match vendor {
+            "0x1002" | "0x1022" => "AMD",
+            "0x10de" => "NVIDIA",
+            "0x8086" => "Intel",
+            "0x15ad" => "VMware",
+            "0x1234" => "QEMU",
+            _ => "GPU",
+        }
+    }
+
+    let Ok(entries) = std::fs::read_dir("/sys/bus/pci/devices") else {
+        return Vec::new();
+    };
+    let mut gpus: Vec<String> = Vec::new();
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let Ok(class) = std::fs::read_to_string(path.join("class")) else {
+            continue;
+        };
+        let class = class.trim();
+        if !matches!(class, "0x030000" | "0x030200" | "0x038000") {
+            continue;
+        }
+        let vendor = std::fs::read_to_string(path.join("vendor"))
+            .map(|v| v.trim().to_lowercase())
+            .unwrap_or_default();
+        let device = std::fs::read_to_string(path.join("device"))
+            .map(|v| v.trim().trim_start_matches("0x").to_lowercase())
+            .unwrap_or_default();
+        // Prefer a real product name when the kernel exposes one.
+        let label = std::fs::read_to_string(path.join("label"))
+            .map(|l| l.trim().to_string())
+            .ok()
+            .filter(|l| !l.is_empty());
+        match label {
+            Some(name) => gpus.push(name),
+            None => {
+                let vendor_short = vendor.trim_start_matches("0x").to_string();
+                let id = if device.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({vendor_short}:{device})")
+                };
+                gpus.push(format!("{} GPU{id}", vendor_name(&vendor)));
+            }
+        }
+    }
+    gpus.sort();
+    gpus.dedup();
+    gpus
 }
 
 // ---------------------------------------------------------------------------
