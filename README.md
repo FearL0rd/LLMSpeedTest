@@ -120,6 +120,15 @@ The OpenAI protocol carries no hardware info, so the app fills the gap:
 > network, Detect reports engine/model/VRAM info only; label the hardware
 > manually or run a metrics exporter on that machine.
 
+### Screenshots
+
+<img width="811" height="554" alt="image" src="https://github.com/user-attachments/assets/45dd61c7-8914-4b3b-a9c1-6838e91eacc6" />
+
+<img width="811" height="554" alt="image" src="https://github.com/user-attachments/assets/9bdff60e-5478-41c6-b973-694eee538635" />
+
+<img width="811" height="554" alt="image" src="https://github.com/user-attachments/assets/61f9f8db-a52d-4cb8-9b57-3da7c6b53552" />
+
+
 ## Installation
 
 There are no prebuilt downloads — build once on the target machine (see
