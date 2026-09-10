@@ -128,6 +128,8 @@ The OpenAI protocol carries no hardware info, so the app fills the gap:
 
 <img width="811" height="554" alt="image" src="https://github.com/user-attachments/assets/61f9f8db-a52d-4cb8-9b57-3da7c6b53552" />
 
+<img width="811" height="554" alt="image" src="https://github.com/user-attachments/assets/d31b719a-2324-4d38-ae82-fed5618b1829" />
+
 
 ## Installation
 
