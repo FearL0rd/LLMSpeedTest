@@ -44,7 +44,11 @@ llama-bench-style test matrices over any OpenAI-compatible endpoint:
   estimate of pure server-side prompt processing. This matters most for
   *remote* endpoints where network round-trip would otherwise inflate TTFT.
 - **Prefix caching** — two-step measurement: context-load rows (`ctx_pp`,
-  `ctx_tg`) followed by cached-context runs at the same depth.
+  `ctx_tg`) followed by cached-context runs at the same depth; pp rates on
+  cached rows count only the newly processed tokens.
+- **Cache busting** — every measured pp/tg request embeds a unique nonce, so a
+  server-side prefix cache cannot serve repeated prompts and fake near-zero
+  prefill times (only the `ctx_*` load rows intentionally hit the cache).
 - **Exact-length runs** — `min_tokens` + `ignore_eos` for fixed output length
   (supported by vLLM, llama.cpp).
 - **Coherence check** — asks the model "2 + 2" with deterministic decoding and
@@ -62,6 +66,21 @@ ttfr, est_ppt, e2e_ttft, and tpot — so blank
 cells only ever mean "not applicable"; a hover tooltip on the test name shows
 the raw stream diagnostics (chunks / content chunks / usage chunks) if a
 server streams unusually.
+
+Example Markdown export (values from a real run against llama.cpp server +
+Qwen3 IQ3_XXS; peak t/s is blank for c2 rows because overlapping requests have
+no single shared 1-second window):
+
+| test                |           t/s (total) |        t/s (req) | peak t/s      | peak t/s (req) |        ttfr (ms) |      est_ppt (ms) |     e2e_ttft (ms) |
+|:--------------------|----------------------:|-----------------:|--------------:|---------------:|-----------------:|------------------:|------------------:|
+| pp2048 (c1)         |       239.55 ± 9.13   |   239.55 ± 9.13  |               |                |  7880.0 ± 154.0  |   7786.69 ± 154.0 |   7880.0 ± 154.0  |
+| tg32 (c1)           |        45.48 ± 1.05   |    45.48 ± 1.05  | 46.95 ± 1.09  |  46.95 ± 1.09  |                  |                   |                   |
+| pp2048 (c2)         |       248.47 ± 14.18  |   125.80 ± 7.25  |               |                | 15291.78 ± 750.6 |  15198.47 ± 750.6 | 15291.78 ± 750.6  |
+| tg32 (c2)           |        56.25 ± 1.61   |    31.58 ± 2.71  |               |   32.44 ± 3.01 |                  |                   |                   |
+| ctx_pp @ d4096 (c1) |       263.70 ± 11.47  |   263.70 ± 11.47 |               |                | 13780.65 ± 676.1 |  13687.34 ± 676.1 | 13780.65 ± 676.1  |
+
+…followed by the `ctx_tg` / `pp2048 @ d4096` / `tg32 @ d4096` rows and the
+remaining concurrency level, for 12 rows in total with the default matrix.
 
 ### Engine-agnostic integration
 
@@ -143,6 +162,8 @@ package manager's equivalent.
 | TPS (decode) | `completion_tokens ÷ decode wall time` | `eval_count ÷ (eval_duration / 1e9)` |
 | TPOT | `decode wall time ÷ completion_tokens` | `eval_duration ÷ eval_count` |
 | Peak t/s | max tokens/sec over any trailing 1 s window | per-chunk peak |
+| Suite t/s (total) | aggregate tokens ÷ wall time across concurrent requests | equals t/s (req) at concurrency 1 |
+| Suite t/s (req) | mean per-request rate — `prompt_tokens ÷ est_ppt` (pp rows), decode rate (tg rows) | — |
 | Token counts | standard `usage` in final chunk | Ollama `prompt_eval_count` / `eval_count` |
 
 The live chart estimates per-chunk tokens from payload length (chars ÷ 4);
@@ -293,8 +314,9 @@ src/
   engine/
     metrics.ts    MetricsAccumulator — TTFR/TTFT/TPOT/TPS/token accounting,
                   peak-window stats, stream diagnostics (pure, unit-tested)
-    runner.ts     Suite orchestration: matrix execution, warmups, concurrency,
-                  prefix-cache rows, calibration, mean ± std aggregation
+    runner.ts     Suite orchestration: matrix execution per depth ×
+                  concurrency, warmups, cache-busted prompts, prefix-cache
+                  ctx rows, calibration, mean ± std aggregation
     prompts.ts    Natural-text padding + server-calibrated prompt lengths
     latency.ts    Baseline latency probes (generation / api / none)
     probe.ts      Engine detection + system-info bridge (Detect button)
@@ -318,7 +340,9 @@ src/
 src-tauri/
   src/lib.rs      Tauri commands: stream_completion (reqwest SSE bridge via
                   Channel), probe_endpoint (concurrent engine probes),
-                  get_system_info (sysinfo + WMI GPUs on Windows)
+                  get_system_info (sysinfo; WMI GPUs on Windows; on Linux
+                  lspci → sysfs PCI scan → NVIDIA /proc, disks via sysinfo
+                  with a /proc/mounts + statvfs fallback)
 scripts/
   mock-server.mjs      mock OpenAI-compatible SSE server
   generate-icons.mjs   icon generator (PNG + multi-size ICO, no deps)
