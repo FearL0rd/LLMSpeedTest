@@ -108,8 +108,40 @@ so sweeps hit their target token counts without shipping a tokenizer.
 ## Development
 
 Prerequisites: Node 18+ and Rust. The native webview runtime is per-platform:
-WebView2 (Windows — preinstalled on 10/11), WebKitGTK 4.1 (Linux — see below),
-WKWebView (macOS).
+WebView2 (Windows — see below), WebKitGTK 4.1 (Linux — see below), WKWebView
+(macOS — preinstalled; `xcode-select --install` for the build tools).
+
+### Windows build notes
+
+The desktop app builds natively with the MSVC toolchain. One-time setup:
+
+1. **Visual Studio C++ Build Tools** — install from
+   [visualstudio.microsoft.com/visual-cpp-build-tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+   and select the **"Desktop development with C++"** workload (provides
+   `cl.exe`, the Windows SDK, and the linker). Visual Studio Community/Pro
+   with that workload also works.
+2. **Rust (MSVC target)** — install from [rustup.rs](https://rustup.rs); on
+   Windows choose the default `stable-x86_64-pc-windows-msvc` toolchain.
+3. **WebView2 Runtime** — preinstalled on Windows 10 (1803+) and Windows 11.
+   If missing, install the [Evergreen
+   Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
+
+Verify the toolchain, then build:
+
+```powershell
+rustc --version    # should report the -msvc host triple
+npm install
+npm run tauri dev  # dev app with hot reload
+```
+
+Notes:
+
+- `npm run tauri build` produces the standalone release exe
+  (`src-tauri/target/release/llm-speedtest.exe`); add installers (MSI/NSIS) by
+  running it without `--no-bundle` — Tauri downloads WiX/NSIS automatically
+  on first use.
+- The frontend-only commands (`npm run dev`, `npm run build`, `npm test`)
+  work on any OS and do not require the C++ toolchain.
 
 ### Linux build notes
 
