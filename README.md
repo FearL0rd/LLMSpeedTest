@@ -107,8 +107,53 @@ so sweeps hit their target token counts without shipping a tokenizer.
 
 ## Development
 
-Prerequisites: Node 18+, Rust (MSVC toolchain on Windows), and the platform
-webview runtime (WebView2 on Windows).
+Prerequisites: Node 18+ and Rust. The native webview runtime is per-platform:
+WebView2 (Windows — preinstalled on 10/11), WebKitGTK 4.1 (Linux — see below),
+WKWebView (macOS).
+
+### Linux build notes
+
+Building the desktop app on Linux requires the GTK/WebKit development
+libraries. Without them the build fails in `pango-sys` / `gdk-sys` /
+`gdk-pixbuf-sys` / `atk-sys`.
+
+Debian / Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev build-essential pkg-config \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev file
+```
+
+Fedora:
+
+```bash
+sudo dnf install webkit2gtk4.1-devel gtk3-devel libxdo-devel openssl-devel \
+  libayatana-appindicator3-devel librsvg2-devel
+```
+
+Arch:
+
+```bash
+sudo pacman -S webkit2gtk-4.1 gtk3 libxdo
+```
+
+Verify what the `-sys` crates look for, then build:
+
+```bash
+pkg-config --modversion gtk+-3.0        # prints e.g. 3.24.x
+pkg-config --modversion webkit2gtk-4.1  # prints e.g. 2.4x.x
+npm run tauri build                     # first build takes several minutes
+```
+
+Notes:
+
+- Tauri 2 requires **webkit2gtk-4.1** — the older `libwebkit2gtk-4.0-dev`
+  does not satisfy it.
+- **Never reuse `node_modules` across operating systems.** A `node_modules`
+  folder copied from Windows loses Unix exec permissions (`vite: Permission
+  denied`) and contains Windows-native binaries. On each OS run a fresh
+  `rm -rf node_modules && npm install`.
 
 ```bash
 npm install
@@ -132,12 +177,13 @@ npm run tauri dev
 npm run tauri build
 ```
 
-> **Which exe to run:** `tauri dev` produces `src-tauri/target/debug/llm-speedtest.exe`,
-> a dev build that loads the UI from the Vite dev server (port 1420) — run it
-> via `npm run tauri dev`, never standalone. The standalone app is
-> `src-tauri/target/release/llm-speedtest.exe` (~11 MB, UI embedded): build it
-> with `npm run tauri build -- --no-bundle`, then double-click it — no dev
-> server required.
+> **Which binary to run:** `tauri dev` produces a *dev* build
+> (`src-tauri/target/debug/`) that loads the UI from the Vite dev server
+> (port 1420) — run it via `npm run tauri dev`, never standalone. The
+> standalone app is the *release* build, `src-tauri/target/release/`
+> (`llm-speedtest.exe` on Windows, `llm-speedtest` on Linux/macOS; ~11 MB,
+> UI embedded): build it with `npm run tauri build -- --no-bundle`, then run
+> it directly — no dev server required.
 
 Mock server environment variables:
 
