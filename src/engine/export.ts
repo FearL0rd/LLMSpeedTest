@@ -4,6 +4,7 @@
  */
 import type { SavedRun } from '../types';
 import type { Stat, SuiteResult, SuiteRow } from './runner';
+import { isTauri } from './streaming';
 
 export function fmtStat(s: Stat | undefined, digits = 2): string {
   if (!s) return '';
@@ -145,14 +146,38 @@ export function runsToCsv(runs: SavedRun[]): string {
   return [header, ...lines].join('\n');
 }
 
-export function download(filename: string, content: string, mime: string): void {
+/**
+ * Save text content to a file.
+ *
+ * Inside the desktop app this opens a native Save As dialog and writes the
+ * file through the fs plugin — the webview's blob-URL downloads are
+ * unreliable (racy revoke on WebView2, silently dropped on WebKitGTK).
+ * In plain-browser dev mode it falls back to the anchor-download trick.
+ */
+export async function download(filename: string, content: string, mime: string): Promise<void> {
+  if (isTauri()) {
+    const { save } = await import('@tauri-apps/plugin-dialog');
+    const { writeTextFile } = await import('@tauri-apps/plugin-fs');
+    const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.') + 1) : 'txt';
+    const path = await save({
+      defaultPath: filename,
+      filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+    });
+    if (!path) return; // user cancelled the dialog
+    await writeTextFile(path, content);
+    return;
+  }
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  // Revoke late: revoking synchronously after click() can cancel the
+  // download before the blob has been read.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 /** Parse an imported runs/suite JSON file, tolerating single-item payloads. */

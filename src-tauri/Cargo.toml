@@ -20,6 +20,8 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 futures-util = "0.3"
 sysinfo = "0.33"
+tauri-plugin-dialog = "2.7.3"
+tauri-plugin-fs = "2.5.2"
 
 [target.'cfg(windows)'.dependencies]
 wmi = "0.14"

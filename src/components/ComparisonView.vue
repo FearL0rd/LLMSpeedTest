@@ -22,15 +22,23 @@ function dateLabel(ts: number): string {
   return new Date(ts).toLocaleString();
 }
 
-function exportCsv(): void {
+async function exportCsv(): Promise<void> {
   if (savedRuns.value.length > 0) {
-    download('speedtest-runs.csv', runsToCsv(savedRuns.value), 'text/csv');
+    try {
+      await download('speedtest-runs.csv', runsToCsv(savedRuns.value), 'text/csv');
+    } catch (err) {
+      importError.value = `CSV export failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
 }
 
-function exportJson(): void {
+async function exportJson(): Promise<void> {
   if (savedRuns.value.length > 0) {
-    download('speedtest-runs.json', JSON.stringify(savedRuns.value, null, 2), 'application/json');
+    try {
+      await download('speedtest-runs.json', JSON.stringify(savedRuns.value, null, 2), 'application/json');
+    } catch (err) {
+      importError.value = `JSON export failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useSuiteStore } from '../stores/suite';
 import {
@@ -16,6 +16,7 @@ import LineChart from './LineChart.vue';
 
 const store = useSuiteStore();
 const { result } = storeToRefs(store);
+const exportError = ref<string | null>(null);
 
 const rows = computed(() => result.value?.rows ?? []);
 
@@ -63,15 +64,21 @@ const concurrencySeries = computed(() => {
   return [...groups.entries()].map(([name, points]) => ({ name, points })).filter((s) => s.points.length > 1);
 });
 
-function exportResult(format: 'json' | 'csv' | 'md'): void {
+async function exportResult(format: 'json' | 'csv' | 'md'): Promise<void> {
   const r = result.value;
   if (!r) return;
-  if (format === 'json') {
-    download(`speedtest-suite-${r.id}.json`, JSON.stringify(r, null, 2), 'application/json');
-  } else if (format === 'csv') {
-    download(`speedtest-suite-${r.id}.csv`, suiteToCsv(r), 'text/csv');
-  } else {
-    download(`speedtest-suite-${r.id}.md`, suiteToMarkdown(r), 'text/markdown');
+  const id = r.id;
+  try {
+    if (format === 'json') {
+      await download(`speedtest-suite-${id}.json`, JSON.stringify(r, null, 2), 'application/json');
+    } else if (format === 'csv') {
+      await download(`speedtest-suite-${id}.csv`, suiteToCsv(r), 'text/csv');
+    } else {
+      await download(`speedtest-suite-${id}.md`, suiteToMarkdown(r), 'text/markdown');
+    }
+  } catch (err) {
+    exportError.value = err instanceof Error ? err.message : String(err);
+    setTimeout(() => (exportError.value = null), 6000);
   }
 }
 </script>
@@ -99,6 +106,10 @@ function exportResult(format: 'json' | 'csv' | 'md'): void {
           <button data-testid="export-csv" @click="exportResult('csv')">CSV</button>
           <button data-testid="export-md" @click="exportResult('md')">Markdown</button>
         </div>
+      </div>
+
+      <div v-if="exportError" class="export-error" data-testid="export-error">
+        Export failed: {{ exportError }}
       </div>
 
       <div class="table-wrap">
@@ -199,6 +210,13 @@ function exportResult(format: 'json' | 'csv' | 'md'): void {
 }
 .export-btns button:hover {
   border-color: var(--accent);
+}
+.export-error {
+  color: var(--danger);
+  font-size: 12px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  padding: 8px 10px;
 }
 .table-wrap {
   overflow-x: auto;
