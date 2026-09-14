@@ -1,4 +1,4 @@
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { MetricsAccumulator, runLabel } from '../engine/metrics';
 import { applyLatencyAdjustment } from '../engine/runner';
@@ -23,6 +23,66 @@ import type {
 } from '../types';
 
 const STORAGE_KEY = 'llm-speedtest.runs.v1';
+const CONFIG_KEY = 'llm-speedtest.config.v1';
+
+/** Connection/prompt form fields persisted between sessions. */
+const CONFIG_FIELDS = [
+  'endpoint',
+  'apiKey',
+  'model',
+  'systemPrompt',
+  'prompt',
+  'temperature',
+  'maxTokens',
+  'label',
+  'hardware',
+  'latencyMode',
+  'includeUsage',
+] as const;
+
+const LATENCY_MODES = ['generation', 'api', 'none'];
+
+/**
+ * Parse a previously stored config payload, keeping only known form fields
+ * with sane types. Unknown keys (from other versions) are dropped so old or
+ * foreign payloads degrade safely; missing keys fall back to defaults.
+ */
+export function parseStoredConfig(raw: string | null): Partial<StreamConfig> {
+  if (!raw) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (parsed === null || typeof parsed !== 'object') return {};
+  const record = parsed as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of CONFIG_FIELDS) {
+    const value = record[key];
+    if (value === undefined || value === null) continue;
+    if (key === 'temperature' || key === 'maxTokens') {
+      if (typeof value === 'number' && Number.isFinite(value) && value > 0) out[key] = value;
+    } else if (key === 'includeUsage') {
+      out.includeUsage = Boolean(value);
+    } else if (key === 'latencyMode') {
+      if (typeof value === 'string' && LATENCY_MODES.includes(value)) out.latencyMode = value;
+    } else {
+      out[key] = typeof value === 'string' ? value : String(value);
+    }
+  }
+  return out as Partial<StreamConfig>;
+}
+
+/** Last-used form values merged over defaults; safe when storage is unavailable. */
+function loadStoredConfig(): StreamConfig {
+  const fallback = defaultConfig();
+  try {
+    return { ...fallback, ...parseStoredConfig(localStorage.getItem(CONFIG_KEY)) };
+  } catch {
+    return fallback;
+  }
+}
 
 function defaultConfig(): StreamConfig {
   return {
@@ -53,7 +113,7 @@ function loadSavedRuns(): SavedRun[] {
 }
 
 export const useBenchmarkStore = defineStore('benchmark', () => {
-  const config = reactive<StreamConfig>(defaultConfig());
+  const config = reactive<StreamConfig>(loadStoredConfig());
 
   const status = ref<RunStatus>('idle');
   const error = ref<string | null>(null);
@@ -91,6 +151,17 @@ export const useBenchmarkStore = defineStore('benchmark', () => {
       console.error('Failed to persist runs', err);
     }
   }
+
+  function persistConfig(): void {
+    try {
+      localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+    } catch (err) {
+      console.error('Failed to persist connection settings', err);
+    }
+  }
+
+  // Persist every form change so the connection settings survive app restarts.
+  watch(config, persistConfig, { deep: true });
 
   function stopTicker(): void {
     if (ticker !== null) {
