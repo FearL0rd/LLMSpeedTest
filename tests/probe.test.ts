@@ -35,7 +35,9 @@ describe('detectEngine', () => {
     expect(info.engine).toBe('Ollama');
     expect(info.version).toBe('0.5.7');
     expect(info.models).toEqual(['llama3.2:latest', 'qwen2.5:7b']);
-    expect(info.vram).toEqual([{ model: 'llama3.2:Q4_K_M', bytes: 3_963_612_866 }]);
+    expect(info.vram).toEqual([
+      { model: 'llama3.2:Q4_K_M', bytes: 3_963_612_866, totalBytes: undefined, gpuPercent: null },
+    ]);
   });
 
   it('identifies vLLM from /version', () => {

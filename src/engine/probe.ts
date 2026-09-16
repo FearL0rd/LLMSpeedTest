@@ -12,7 +12,12 @@ export interface ProbeResult {
 
 export interface OllamaVram {
   model: string;
+  /** VRAM footprint of the loaded model (Ollama `size_vram`). */
   bytes: number;
+  /** Total resident size of the loaded model (Ollama `size`). */
+  totalBytes?: number;
+  /** Share of the model running on GPU, parsed from Ollama `processor`. */
+  gpuPercent?: number | null;
 }
 
 /** What we could identify about the server behind an endpoint. */
@@ -114,6 +119,47 @@ function parseJson(body: string | null): Record<string, unknown> | null {
   }
 }
 
+/**
+ * Parse Ollama's /api/ps payload: loaded models with resident size, VRAM
+ * footprint, and the CPU/GPU split behind the model (llm-bench-style
+ * Memory Usage + GPU Utilization metrics).
+ */
+export function parseOllamaPs(body: string): OllamaVram[] {
+  const json = parseJson(body);
+  if (!json || !Array.isArray(json.models)) return [];
+  return (json.models as Array<Record<string, unknown>>)
+    .map((m): OllamaVram | null => {
+      const name = typeof m?.name === 'string' ? m.name : '';
+      if (!name) return null;
+      const out: OllamaVram = {
+        model: name,
+        bytes: typeof m?.size_vram === 'number' ? m.size_vram : 0,
+        gpuPercent: null,
+      };
+      if (typeof m?.size === 'number') out.totalBytes = m.size;
+      if (typeof m?.processor === 'string') {
+        // Format: "0%/100% CPU/GPU" (CPU share first).
+        const match = m.processor.match(/([\d.]+)%\s*\/\s*([\d.]+)%\s*CPU\/GPU/);
+        if (match) out.gpuPercent = Number.parseFloat(match[2]);
+      }
+      return out;
+    })
+    .filter((m): m is OllamaVram => m !== null);
+}
+
+/** Memory stats for a specific model from a /api/ps probe (Ollama only). */
+export function findModelMemory(probes: ProbeResult[], model: string): OllamaVram | null {
+  const ps = probes.find((p) => p.path === '/api/ps' && p.status === 200);
+  if (!ps?.body) return null;
+  const models = parseOllamaPs(ps.body);
+  if (models.length === 0) return null;
+  return (
+    models.find((m) => m.model === model) ??
+    models.find((m) => model.startsWith(m.model) || m.model.startsWith(model)) ??
+    (models.length === 1 ? models[0] : null)
+  );
+}
+
 function ok(p: ProbeResult | undefined): p is ProbeResult & { body: string } {
   return p !== undefined && p.status === 200 && p.body !== null && p.body.length > 0;
 }
@@ -210,14 +256,8 @@ export function detectEngine(probes: ProbeResult[]): EngineInfo {
 
   const ps = findOk(probes, '/api/ps');
   if (ps) {
-    const json = parseJson(ps.body);
-    if (Array.isArray(json?.models)) {
-      info.vram = (json.models as Array<Record<string, unknown>>)
-        .map((m) => ({
-          model: typeof m?.name === 'string' ? m.name : '',
-          bytes: typeof m?.size_vram === 'number' ? m.size_vram : 0,
-        }))
-        .filter((m) => m.model.length > 0 && m.bytes > 0);
+    for (const m of parseOllamaPs(ps.body)) {
+      if (m.bytes > 0) info.vram.push(m);
     }
   }
 

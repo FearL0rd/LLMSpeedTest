@@ -1,0 +1,203 @@
+/**
+ * Runs the four llm-bench-style scenarios against an endpoint: one streamed
+ * generation per scenario (fixed prompt + temperature), followed by optional
+ * LLM-judge scoring. Memory / GPU-split metrics come from Ollama /api/ps
+ * (blank on engines that do not expose them).
+ */
+import { MetricsAccumulator } from './metrics';
+import { applyLatencyAdjustment } from './runner';
+import { measureBaselineLatency } from './latency';
+import { streamCompletion } from './streaming';
+import { findModelMemory, probeEndpoint } from './probe';
+import { SCENARIOS, efficiencyRatio, stripThink, weightedKpi, type ScenarioDef } from './scenarios';
+import { buildJudgePrompt, parseJudgeScores } from './judge';
+import type { RunMetrics, SpeedSample, StreamConfig } from '../types';
+
+export interface ScenarioResult {
+  scenarioId: ScenarioDef['id'];
+  name: string;
+  focus: string;
+  temperature: number;
+  status: 'pending' | 'running' | 'judging' | 'done' | 'failed';
+  error: string | null;
+  metrics: RunMetrics | null;
+  /** Final answer, chain-of-thought stripped (what gets judged). */
+  response: string;
+  // llm-bench metrics
+  tps: number | null;
+  ttftMs: number | null;
+  ppTps: number | null;
+  memoryBytes: number | null;
+  vramBytes: number | null;
+  gpuPercent: number | null;
+  efficiency: number | null;
+  // Optional LLM-judge quality scores
+  scores: Record<string, number> | null;
+  kpi: number | null;
+  judgeModel: string | null;
+  judgeError: string | null;
+}
+
+export interface ScenarioSuiteResult {
+  id: string;
+  model: string;
+  endpoint: string;
+  judged: boolean;
+  judgeModel: string | null;
+  startedAt: number;
+  /** Mean KPI across scored scenarios. */
+  overallKpi: number | null;
+  results: ScenarioResult[];
+}
+
+export interface ScenarioSuiteHandlers {
+  onProgress?: (label: string) => void;
+  onScenarios?: (results: ScenarioResult[]) => void;
+  /** Live answer text of the currently running scenario. */
+  onLiveAnswer?: (text: string) => void;
+  onSample?: (sample: SpeedSample) => void;
+}
+
+function blankResult(def: ScenarioDef): ScenarioResult {
+  return {
+    scenarioId: def.id,
+    name: def.name,
+    focus: def.focus,
+    temperature: def.temperature,
+    status: 'pending',
+    error: null,
+    metrics: null,
+    response: '',
+    tps: null,
+    ttftMs: null,
+    ppTps: null,
+    memoryBytes: null,
+    vramBytes: null,
+    gpuPercent: null,
+    efficiency: null,
+    scores: null,
+    kpi: null,
+    judgeModel: null,
+    judgeError: null,
+  };
+}
+
+/**
+ * Run the four scenarios in sequence, then judge their answers when enabled.
+ * Judged by `judgeModel` (falls back to the model under test — self-grading
+ * bias applies; use a stronger model when you can).
+ */
+export async function runScenarioSuite(
+  config: StreamConfig,
+  opts: { judgedBy?: string; enableJudge: boolean },
+  handlers: ScenarioSuiteHandlers = {},
+  signal?: AbortSignal,
+): Promise<ScenarioSuiteResult> {
+  const results = SCENARIOS.map(blankResult);
+  const update = (): void => handlers.onScenarios?.(results.map((r) => ({ ...r })));
+
+  handlers.onProgress?.('Measuring baseline latency…');
+  const latencyMs = await measureBaselineLatency(config).catch(() => null);
+
+  update();
+  for (let i = 0; i < SCENARIOS.length; i++) {
+    if (signal?.aborted) break;
+    const def = SCENARIOS[i];
+    const result = results[i];
+    result.status = 'running';
+    handlers.onProgress?.(`Scenario ${i + 1}/4: ${def.name}`);
+    handlers.onLiveAnswer?.('');
+    update();
+
+    // One streamed generation per scenario at its fixed temperature.
+    const acc = new MetricsAccumulator();
+    acc.start();
+    try {
+      await streamCompletion(
+        { ...config, systemPrompt: def.systemPrompt, prompt: def.prompt, temperature: def.temperature },
+        (chunk) => {
+          if (signal?.aborted) return;
+          acc.ingest(chunk);
+          for (const s of acc.takeNewSamples()) handlers.onSample?.(s);
+          handlers.onLiveAnswer?.(acc.content);
+        },
+      );
+      const metrics = applyLatencyAdjustment(acc.finalize(), latencyMs);
+      result.status = 'done';
+      result.metrics = metrics;
+      result.response = stripThink(metrics.content);
+      result.tps = metrics.tps ?? metrics.engineTps;
+      result.ttftMs = metrics.ttftMs ?? metrics.ttfrMs;
+      result.ppTps = metrics.ppTps;
+    } catch (err) {
+      result.status = 'failed';
+      result.error = err instanceof Error ? err.message : String(err);
+      update();
+      continue;
+    }
+
+    // Memory / GPU split (Ollama only; blank on other engines).
+    try {
+      const probes = await probeEndpoint(config.endpoint, config.apiKey);
+      const mem = findModelMemory(probes, config.model);
+      if (mem) {
+        result.memoryBytes = mem.totalBytes ?? null;
+        result.vramBytes = mem.bytes || null;
+        result.gpuPercent = mem.gpuPercent ?? null;
+      }
+    } catch {
+      // Memory stats are best-effort; never fail a scenario over them.
+    }
+    result.efficiency = efficiencyRatio(result.tps, result.vramBytes);
+    update();
+
+    if (!opts.enableJudge || signal?.aborted) continue;
+
+    // Judge the think-stripped answer with the judge model.
+    result.status = 'judging';
+    result.judgeModel = opts.judgedBy?.trim() || config.model;
+    handlers.onProgress?.(`Judging ${def.name}…`);
+    update();
+    const { systemPrompt, prompt } = buildJudgePrompt(def, result.response);
+    try {
+      const judgeAcc = new MetricsAccumulator();
+      judgeAcc.start();
+      await streamCompletion(
+        {
+          ...config,
+          model: result.judgeModel,
+          systemPrompt,
+          prompt,
+          temperature: 0,
+          maxTokens: 512,
+        },
+        (chunk) => judgeAcc.ingest(chunk),
+        // No live UI for judge output.
+      );
+      const scores = parseJudgeScores(judgeAcc.finalize().content, def);
+      if (scores === null) {
+        result.judgeError = 'Judge returned unparseable scores';
+      } else {
+        result.scores = scores;
+        result.kpi = weightedKpi(def.dimensions, scores);
+      }
+    } catch (err) {
+      result.judgeError = err instanceof Error ? err.message : String(err);
+    }
+    result.status = 'done';
+    update();
+  }
+
+  const kpis = results.map((r) => r.kpi).filter((k): k is number => k !== null);
+  handlers.onProgress?.('Scenarios complete.');
+  return {
+    id: `sc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    model: config.model,
+    endpoint: config.endpoint,
+    judged: opts.enableJudge,
+    judgeModel: opts.enableJudge ? (opts.judgedBy?.trim() || config.model) : null,
+    startedAt: Date.now(),
+    overallKpi: kpis.length > 0 ? kpis.reduce((a, b) => a + b, 0) / kpis.length : null,
+    results,
+  };
+}

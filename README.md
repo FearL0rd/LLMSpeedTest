@@ -58,6 +58,18 @@ llama-bench-style test matrices over any OpenAI-compatible endpoint:
   context depth. Exports: JSON (full fidelity incl. time series), CSV,
   Markdown (llama-bench-style table).
 
+## Scenario benchmarks (llm-bench style)
+
+The **Scenarios** tab runs four fixed tasks against the connection configured
+on the Benchmark tab — Agent Workflow (tool planning), Code Generation
+(Breakout), Role Play & Narrative, and Research & Analysis — each at its own
+temperature (cold compute 0.3-0.5, creative 0.8). Every scenario reports
+generation t/s, PP speed, TTFT, memory and GPU% (Ollama endpoints), and an
+efficiency ratio (t/s per GB). Optional **LLM-as-judge** scoring grades each
+answer on weighted rubric dimensions per scenario (chain-of-thought is
+stripped before judging) and rolls up to a per-scenario KPI and an overall
+KPI — choose any judge model, or leave blank to let the model grade itself.
+
 Rows are labeled like llama-benchy: `pp2048 (c1)`, `tg32 @ d4096 (c2)`,
 `ctx_pp @ d4096 (c1)`. Each row reports **t/s (total)** (aggregate across
 concurrent requests) and **t/s (req)** (per-request speed — prompt-processing

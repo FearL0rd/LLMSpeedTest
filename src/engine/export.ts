@@ -4,6 +4,8 @@
  */
 import type { SavedRun } from '../types';
 import type { Stat, SuiteResult, SuiteRow } from './runner';
+import type { ScenarioSuiteResult } from './scenarioRunner';
+import { formatBytes } from './probe';
 import { isTauri } from './streaming';
 
 export function fmtStat(s: Stat | undefined, digits = 2): string {
@@ -65,6 +67,76 @@ export function suiteToMarkdown(result: SuiteResult): string {
     ...lines,
     '',
   ].join('\n');
+}
+
+/** Plain number cell for the scenario table (no ± std available). */
+function fmtNum(v: number | null | undefined, digits = 1): string {
+  return v === null || v === undefined || !Number.isFinite(v) ? '' : v.toFixed(digits);
+}
+
+/** llm-bench-style scenario report: performance metrics plus judge KPIs. */
+export function scenariosToMarkdown(result: ScenarioSuiteResult): string {
+  const headline =
+    `# Scenario Benchmark — ${result.model}\n\n` +
+    `endpoint: ${result.endpoint}` +
+    (result.judgeModel ? ` · judged by ${result.judgeModel}` : ' · quality scoring: off') +
+    (result.overallKpi !== null ? `\n\n**Overall KPI: ${result.overallKpi.toFixed(1)} / 100**` : '') +
+    `\n\n| scenario | temp | gen t/s | pp t/s | ttft (ms) | total (ms) | tokens | memory | gpu % | t/s per GB | kpi |\n` +
+    `|:---------|-----:|--------:|-------:|----------:|-----------:|-------:|-------:|------:|-----------:|----:|`;
+  const rows = result.results.map(
+    (r) =>
+      `| ${r.name} | ${r.temperature.toFixed(1)} | ${fmtNum(r.tps)} | ${fmtNum(r.ppTps, 0)} | ` +
+      `${fmtNum(r.ttftMs, 0)} | ${fmtNum(r.metrics?.totalTimeMs, 0)} | ` +
+      `${r.metrics?.completionTokens ?? ''} | ${r.vramBytes ? formatBytes(r.vramBytes) : ''} | ` +
+      `${r.gpuPercent !== null ? `${r.gpuPercent}%` : ''} | ${fmtNum(r.efficiency)} | ` +
+      `${r.kpi !== null ? r.kpi.toFixed(1) : ''} |`,
+  );
+  const guides = result.results
+    .filter((r) => r.scores && r.kpi !== null)
+    .map(
+      (r) =>
+        `\n### ${r.name} — KPI ${r.kpi?.toFixed(1)}\n` +
+        Object.entries(r.scores ?? {})
+          .map(([k, v]) => `- ${k}: ${v}`)
+          .join('\n'),
+    );
+  return [headline, ...rows, '\n', ...guides].join('\n');
+}
+
+export function scenariosToCsv(result: ScenarioSuiteResult): string {
+  const header = [
+    'scenario',
+    'temperature',
+    'tps',
+    'pp_tps',
+    'ttft_ms',
+    'total_ms',
+    'prompt_tokens',
+    'completion_tokens',
+    'vram_bytes',
+    'gpu_percent',
+    'tps_per_gb',
+    'kpi',
+    'status',
+  ].join(',');
+  const lines = result.results.map((r) =>
+    [
+      r.name,
+      r.temperature,
+      r.tps?.toFixed(3) ?? '',
+      r.ppTps?.toFixed(3) ?? '',
+      r.ttftMs?.toFixed(2) ?? '',
+      r.metrics?.totalTimeMs?.toFixed(0) ?? '',
+      r.metrics?.promptTokens ?? '',
+      r.metrics?.completionTokens ?? '',
+      r.vramBytes ?? '',
+      r.gpuPercent ?? '',
+      r.efficiency?.toFixed(4) ?? '',
+      r.kpi ?? '',
+      r.status,
+    ].join(','),
+  );
+  return [header, ...lines].join('\n');
 }
 
 export function suiteToCsv(result: SuiteResult): string {

@@ -7,11 +7,12 @@ import LiveRun from './components/LiveRun.vue';
 import ComparisonView from './components/ComparisonView.vue';
 import SuitePanel from './components/SuitePanel.vue';
 import SuiteResults from './components/SuiteResults.vue';
+import ScenariosView from './components/ScenariosView.vue';
 
 const store = useBenchmarkStore();
 const { compareIds } = storeToRefs(store);
 
-const tab = ref<'run' | 'suite' | 'compare'>('run');
+const tab = ref<'run' | 'suite' | 'scenarios' | 'compare'>('run');
 const compareCount = computed(() => compareIds.value.length);
 </script>
 
@@ -38,6 +39,13 @@ const compareCount = computed(() => compareIds.value.length);
           Suite
         </button>
         <button
+          :class="{ active: tab === 'scenarios' }"
+          data-testid="tab-scenarios"
+          @click="tab = 'scenarios'"
+        >
+          Scenarios
+        </button>
+        <button
           :class="{ active: tab === 'compare' }"
           data-testid="tab-compare"
           @click="tab = 'compare'"
@@ -55,6 +63,10 @@ const compareCount = computed(() => compareIds.value.length);
     <main v-show="tab === 'suite'" class="suite-layout">
       <SuitePanel />
       <SuiteResults />
+    </main>
+
+    <main v-show="tab === 'scenarios'" class="scenarios-layout">
+      <ScenariosView />
     </main>
 
     <main v-show="tab === 'compare'" class="compare-layout">
@@ -127,7 +139,8 @@ const compareCount = computed(() => compareIds.value.length);
 }
 .run-layout,
 .suite-layout,
-.compare-layout {
+.compare-layout,
+.scenarios-layout {
   flex: 1;
   min-height: 0;
   display: grid;
@@ -140,7 +153,8 @@ const compareCount = computed(() => compareIds.value.length);
 .suite-layout {
   grid-template-columns: 340px 1fr;
 }
-.compare-layout {
+.compare-layout,
+.scenarios-layout {
   grid-template-columns: 1fr;
 }
 @media (max-width: 860px) {
