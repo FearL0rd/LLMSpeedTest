@@ -169,14 +169,19 @@ export async function runScenarioSuite(
           systemPrompt,
           prompt,
           temperature: 0,
-          maxTokens: 512,
+          // Generous budget: thinking judges spend tokens on reasoning first.
+          maxTokens: 2048,
         },
         (chunk) => judgeAcc.ingest(chunk),
         // No live UI for judge output.
       );
-      const scores = parseJudgeScores(judgeAcc.finalize().content, def);
+      const judgeText = stripThink(judgeAcc.finalize().content);
+      const scores = parseJudgeScores(judgeText, def);
       if (scores === null) {
-        result.judgeError = 'Judge returned unparseable scores';
+        const excerpt = judgeText.replace(/\s+/g, ' ').trim().slice(0, 120);
+        result.judgeError = excerpt
+          ? `Judge output not parseable: "${excerpt}…"`
+          : 'Judge produced no output';
       } else {
         result.scores = scores;
         result.kpi = weightedKpi(def.dimensions, scores);

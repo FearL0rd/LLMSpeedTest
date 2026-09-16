@@ -103,6 +103,32 @@ describe('judge prompts and parsing', () => {
     ).toBeNull();
     expect(parseJudgeScores('the answer was great', agent)).toBeNull();
   });
+
+  it('tolerates key spelling variants from chatty judges', () => {
+    const out = parseJudgeScores(
+      '{"Scores": {"Coherence": 81, "tool_selection": 90, "decomposition": 70, "error handling": 60}}',
+      agent,
+    );
+    expect(out).toEqual({
+      coherence: 81,
+      toolSelection: 90,
+      decomposition: 70,
+      errorHandling: 60,
+    });
+  });
+
+  it('ignores braces in surrounding prose', () => {
+    const out = parseJudgeScores(
+      'I computed {these} scores: {"scores": {"coherence": 80, "toolSelection": 88, "decomposition": 75, "errorHandling": 65}} (as {expected})',
+      agent,
+    );
+    expect(out).toEqual({
+      coherence: 80,
+      toolSelection: 88,
+      decomposition: 75,
+      errorHandling: 65,
+    });
+  });
 });
 
 describe('Ollama /api/ps parsing', () => {

@@ -37,15 +37,27 @@ export function extractJsonObject(text: string): string | null {
 }
 
 /**
- * Parse judge JSON into validated per-dimension scores (integers/clamped 0-100).
- * Returns null when the output is unparseable or missing required dimensions.
+ * All balanced `{...}` candidates (at most one nesting level), the ones
+ * containing a "scores" key first. Covers judges that wrap the JSON in prose
+ * or emit braces inside their explanation.
  */
-export function parseJudgeScores(
-  judgeOutput: string,
+function candidateJsonObjects(text: string): string[] {
+  const out: string[] = [];
+  const re = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) out.push(m[0]);
+  out.sort((a, b) => Number(b.includes('"scores"')) - Number(a.includes('"scores"')));
+  return out;
+}
+
+/**
+ * Try one JSON candidate: accept the object itself or its `scores` member,
+ * tolerate key variants (case, underscores, spaces), clamp to 0-100.
+ */
+function tryParseScores(
+  jsonText: string,
   def: ScenarioDef,
 ): Record<string, number> | null {
-  const jsonText = extractJsonObject(judgeOutput);
-  if (!jsonText) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(jsonText);
@@ -54,13 +66,35 @@ export function parseJudgeScores(
   }
   if (parsed === null || typeof parsed !== 'object') return null;
   const record = parsed as Record<string, unknown>;
-  const raw = (record.scores ?? record) as Record<string, unknown>;
+  const scoresKey = Object.keys(record).find((k) => k.toLowerCase() === 'scores');
+  const raw = scoresKey ? record[scoresKey] : record;
+  if (typeof raw !== 'object' || raw === null) return null;
+  // Judge models write "Coherence", "tool_selection", "Tool Selection"… normalize.
+  const lut = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    lut.set(k.toLowerCase().replace(/[\s_-]+/g, ''), v);
+  }
   const scores: Record<string, number> = {};
   for (const d of def.dimensions) {
-    const value = raw[d.key];
+    const value = lut.get(d.key.toLowerCase());
     const num = typeof value === 'string' ? Number.parseFloat(value) : value;
     if (typeof num !== 'number' || !Number.isFinite(num)) return null;
     scores[d.key] = Math.max(0, Math.min(100, Math.round(num)));
   }
   return scores;
+}
+
+/**
+ * Parse judge JSON into validated per-dimension scores (integers clamped 0-100).
+ * Returns null when the output is unparseable or missing required dimensions.
+ */
+export function parseJudgeScores(
+  judgeOutput: string,
+  def: ScenarioDef,
+): Record<string, number> | null {
+  for (const candidate of candidateJsonObjects(judgeOutput)) {
+    const scores = tryParseScores(candidate, def);
+    if (scores) return scores;
+  }
+  return null;
 }
