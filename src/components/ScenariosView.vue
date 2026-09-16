@@ -59,7 +59,9 @@ async function exportResult(format: 'json' | 'csv' | 'md'): Promise<void> {
           <div class="sub">
             Four fixed tasks — Agent Workflow, Code Generation, Role Play &amp; Narrative,
             Research &amp; Analysis — each at its own temperature, llm-bench style.
-            Set the endpoint + model on the Benchmark tab first.
+            Set the endpoint + model on the Benchmark tab first. Memory / GPU % /
+            t-s-per-GB fill in on Ollama endpoints (via /api/ps); other engines
+            don't expose them, so those cells stay blank rather than guessed.
           </div>
         </div>
         <div v-if="suiteResult" class="export-btns">
