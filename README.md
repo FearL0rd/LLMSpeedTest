@@ -67,7 +67,11 @@ temperature (cold compute 0.3-0.5, creative 0.8). Every scenario reports
 generation t/s, PP speed, and TTFT. Memory, GPU% and the efficiency ratio
 (t/s per GB) are read from Ollama's `/api/ps` and stay blank on other
 engines — llama.cpp/vLLM don't expose resident memory or the CPU/GPU split
-over their APIs, and the app shows nothing rather than an estimate. Optional **LLM-as-judge** scoring grades each
+over their APIs, and the app shows nothing rather than an estimate.
+Exception: when the model server runs on the same machine as the app, the
+missing values are sampled locally instead — peak VRAM usage and live GPU
+utilization via nvidia-smi (NVIDIA) or sysfs (AMD) — and the efficiency
+ratio uses peak VRAM. Optional **LLM-as-judge** scoring grades each
 answer on weighted rubric dimensions per scenario (chain-of-thought is
 stripped before judging) and rolls up to a per-scenario KPI and an overall
 KPI — choose any judge model, or leave blank to let the model grade itself.

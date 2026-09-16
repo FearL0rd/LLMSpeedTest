@@ -158,7 +158,7 @@ async function exportResult(format: 'json' | 'csv' | 'md'): Promise<void> {
             <td class="num">{{ num(r.ppTps, 0) }}</td>
             <td class="num">{{ num(r.ttftMs, 0) }}</td>
             <td class="num">{{ r.metrics?.completionTokens ?? '—' }}</td>
-            <td class="num">{{ r.vramBytes ? formatBytes(r.vramBytes) : '—' }}</td>
+            <td class="num">{{ r.vramBytes || r.memoryBytes ? formatBytes(r.vramBytes ?? r.memoryBytes) : '—' }}</td>
             <td class="num">{{ r.gpuPercent !== null ? `${r.gpuPercent}%` : '—' }}</td>
             <td class="num">{{ r.efficiency !== null ? r.efficiency.toFixed(2) : '—' }}</td>
             <td class="num kpi">{{ r.kpi !== null ? r.kpi.toFixed(0) : '—' }}</td>

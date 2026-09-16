@@ -6,7 +6,7 @@ import {
   weightedKpi,
 } from '../src/engine/scenarios';
 import { buildJudgePrompt, extractJsonObject, parseJudgeScores } from '../src/engine/judge';
-import { findModelMemory, parseOllamaPs } from '../src/engine/probe';
+import { findModelMemory, parseOllamaPs, pickGpu } from '../src/engine/probe';
 import type { ProbeResult } from '../src/engine/probe';
 
 describe('scenario definitions', () => {
@@ -128,6 +128,29 @@ describe('judge prompts and parsing', () => {
       decomposition: 75,
       errorHandling: 65,
     });
+  });
+});
+
+describe('pickGpu (local GPU sampling)', () => {
+  const gpu = (name: string, used: number, total: number, util: number | null = null) => ({
+    name,
+    memoryUsedBytes: used,
+    memoryTotalBytes: total,
+    utilizationPercent: util,
+  });
+
+  it('picks the GPU serving the model (highest used memory)', () => {
+    const stats = [gpu('GTX 1060', 0, 3 * 1024 ** 3), gpu('RTX 3090', 5 * 1024 ** 3, 24 * 1024 ** 3)];
+    expect(pickGpu(stats)?.name).toBe('RTX 3090');
+  });
+
+  it('falls back to highest total when nothing is loaded', () => {
+    const stats = [gpu('GTX 1060', 0, 3 * 1024 ** 3), gpu('V100', 0, 32 * 1024 ** 3)];
+    expect(pickGpu(stats)?.name).toBe('V100');
+  });
+
+  it('handles empty lists', () => {
+    expect(pickGpu([])).toBeNull();
   });
 });
 

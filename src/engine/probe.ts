@@ -305,9 +305,37 @@ export function primaryDisk(info: SystemInfo): SystemInfo['disks'][number] | nul
   return pool.reduce((a, b) => (b.totalBytes > a.totalBytes ? b : a));
 }
 
+/** Live GPU stats of the machine the app runs on (Tauri only). */
+export interface GpuStat {
+  name: string;
+  memoryUsedBytes: number;
+  memoryTotalBytes: number;
+  /** GPU utilization percent at sample time, or null when unavailable. */
+  utilizationPercent: number | null;
+}
+
+/**
+ * Sample this machine's GPU stats: nvidia-smi (Windows + Linux) or Linux
+ * sysfs (AMD). Empty outside Tauri or when the platform exposes nothing.
+ */
+export async function getGpuStats(): Promise<GpuStat[]> {
+  if (!isTauri()) return [];
+  return invoke<GpuStat[]>('get_gpu_stats');
+}
+
+/** The GPU most likely serving the model: highest used memory, else highest total. */
+export function pickGpu(stats: GpuStat[]): GpuStat | null {
+  if (stats.length === 0) return null;
+  const active = stats.filter((s) => s.memoryUsedBytes > 0);
+  const pool = active.length > 0 ? active : stats;
+  return pool.reduce((a, b) =>
+    (b.memoryUsedBytes || b.memoryTotalBytes) > (a.memoryUsedBytes || a.memoryTotalBytes) ? b : a,
+  );
+}
+
 /** Human-readable byte size, e.g. 3.9 GB. */
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '—';
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined || !Number.isFinite(bytes) || bytes <= 0) return '—';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   const exp = Math.min(Math.floor(Math.log2(bytes) / 10), units.length - 1);
   return `${(bytes / 1024 ** exp).toFixed(exp >= 3 ? 1 : 0)} ${units[exp]}`;

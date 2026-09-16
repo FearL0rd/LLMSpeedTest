@@ -487,6 +487,167 @@ fn scan_pci_gpus_sysfs() -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Live GPU stats for same-host endpoints: when the engine API exposes no
+// memory info (llama.cpp, llama-swap, ...), we read VRAM usage and GPU
+// utilization from the OS instead — nvidia-smi (Windows + Linux) or Linux
+// sysfs (AMD). Empty results mean the platform exposes nothing.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GpuStat {
+    name: String,
+    memory_used_bytes: u64,
+    memory_total_bytes: u64,
+    /// GPU utilization percent at sample time, or null when unavailable.
+    utilization_percent: Option<f32>,
+}
+
+#[tauri::command]
+async fn get_gpu_stats() -> Result<Vec<GpuStat>, String> {
+    let stats = tokio::task::spawn_blocking(collect_gpu_stats)
+        .await
+        .map_err(|e| format!("gpu stats task failed: {e}"))?;
+    Ok(stats)
+}
+
+fn collect_gpu_stats() -> Vec<GpuStat> {
+    if let Some(stats) = nvidia_smi_stats() {
+        return stats;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // No WMI-style used-memory API exists on Windows for non-NVIDIA cards
+        // (Win32_VideoController.AdapterRAM is a capped total), so the sysfs
+        // fallback is Linux-only.
+        let sysfs = amd_sysfs_gpu_stats();
+        if !sysfs.is_empty() {
+            return sysfs;
+        }
+    }
+    Vec::new()
+}
+
+fn nvidia_smi_stats() -> Option<Vec<GpuStat>> {
+    let out = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=name,memory.used,memory.total,utilization.gpu",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let stats = parse_nvidia_smi(&text);
+    if stats.is_empty() {
+        None
+    } else {
+        Some(stats)
+    }
+}
+
+/// Parse `nvidia-smi --query-gpu=... --format=csv,noheader,nounits` rows:
+/// "NVIDIA GeForce RTX 3090, 5234, 24576, 95" (memory in MiB).
+fn parse_nvidia_smi(text: &str) -> Vec<GpuStat> {
+    let mut stats = Vec::new();
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split(',').map(|f| f.trim()).collect();
+        if fields.len() < 3 {
+            continue;
+        }
+        let name = fields[0].to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let used = fields[1].parse::<f64>().unwrap_or(0.0);
+        let total = fields[2].parse::<f64>().unwrap_or(0.0);
+        let utilization_percent = fields.get(3).and_then(|f| f.parse::<f32>().ok());
+        stats.push(GpuStat {
+            name,
+            memory_used_bytes: (used * 1024.0 * 1024.0) as u64,
+            memory_total_bytes: (total * 1024.0 * 1024.0) as u64,
+            utilization_percent,
+        });
+    }
+    stats
+}
+
+#[cfg(test)]
+mod gpu_tests {
+    use super::parse_nvidia_smi;
+
+    #[test]
+    fn parses_nvidia_smi_rows() {
+        let stats = parse_nvidia_smi(
+            "NVIDIA GeForce RTX 3090, 5234, 24576, 95\nNVIDIA Tesla V100 PCIe 32GB, 0, 32510, 0\n",
+        );
+        assert_eq!(stats.len(), 2);
+        assert_eq!(stats[0].name, "NVIDIA GeForce RTX 3090");
+        assert_eq!(stats[0].memory_used_bytes, 5_488_246_784);
+        assert_eq!(stats[0].memory_total_bytes, 25_769_803_776);
+        assert_eq!(stats[0].utilization_percent, Some(95.0));
+        assert_eq!(stats[1].memory_used_bytes, 0);
+        assert_eq!(stats[1].utilization_percent, Some(0.0));
+    }
+
+    #[test]
+    fn skips_garbage_rows() {
+        assert!(parse_nvidia_smi("").is_empty());
+        assert!(parse_nvidia_smi("garbage line without commas\n").is_empty());
+    }
+}
+
+/// Linux AMD/intel fallback via sysfs: VRAM usage/total plus gpu_busy_percent.
+#[cfg(target_os = "linux")]
+fn amd_sysfs_gpu_stats() -> Vec<GpuStat> {
+    let Ok(cards) = std::fs::read_dir("/sys/class/drm") else {
+        return Vec::new();
+    };
+    let mut stats = Vec::new();
+    for entry in cards.filter_map(|e| e.ok()) {
+        let card = entry.file_name().to_string_lossy().to_string();
+        // Only real cards (skip card0-VGA-1 style subnodes).
+        if !card.starts_with("card") || card.contains('-') {
+            continue;
+        }
+        let dev = entry.path().join("device");
+        let total = std::fs::read_to_string(dev.join("mem_info_vram_total"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok());
+        let Some(total) = total else {
+            // Cards without VRAM accounting (Intel iGPU, virtual) are skipped.
+            continue;
+        };
+        let used = std::fs::read_to_string(dev.join("mem_info_vram_used"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        let utilization_percent = std::fs::read_to_string(dev.join("gpu_busy_percent"))
+            .ok()
+            .and_then(|s| s.trim().parse::<f32>().ok());
+        let vendor = std::fs::read_to_string(dev.join("vendor"))
+            .map(|v| v.trim().to_lowercase())
+            .unwrap_or_default();
+        let vendor_label = match vendor.as_str() {
+            "0x1002" | "0x1022" => "AMD",
+            "0x10de" => "NVIDIA",
+            "0x8086" => "Intel",
+            _ => "GPU",
+        };
+        stats.push(GpuStat {
+            name: format!("{vendor_label} ({card})"),
+            memory_used_bytes: used,
+            memory_total_bytes: total,
+            utilization_percent,
+        });
+    }
+    stats.sort_by(|a, b| a.name.cmp(&b.name));
+    stats
+}
+
+// ---------------------------------------------------------------------------
 
 fn parse_sse_data(line: &str) -> Option<String> {
     let rest = line.strip_prefix("data:")?.trim();
@@ -525,7 +686,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             stream_completion,
             probe_endpoint,
-            get_system_info
+            get_system_info,
+            get_gpu_stats
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -8,7 +8,7 @@ import { MetricsAccumulator } from './metrics';
 import { applyLatencyAdjustment } from './runner';
 import { measureBaselineLatency } from './latency';
 import { streamCompletion } from './streaming';
-import { findModelMemory, probeEndpoint } from './probe';
+import { findModelMemory, getGpuStats, isSameHost, pickGpu, probeEndpoint } from './probe';
 import { SCENARIOS, efficiencyRatio, stripThink, weightedKpi, type ScenarioDef } from './scenarios';
 import { buildJudgePrompt, parseJudgeScores } from './judge';
 import type { RunMetrics, SpeedSample, StreamConfig } from '../types';
@@ -109,6 +109,35 @@ export async function runScenarioSuite(
     handlers.onLiveAnswer?.('');
     update();
 
+    // Same-host fallback: when the engine API exposes no memory info
+    // (llama.cpp, llama-swap, ...), sample live GPU stats from the OS
+    // (nvidia-smi / sysfs) while the scenario generates.
+    let gpuSampler: ReturnType<typeof setInterval> | null = null;
+    let gpuPeakUsed = 0;
+    let gpuTotal = 0;
+    const utilSamples: number[] = [];
+    if (result.memoryBytes === null && isSameHost(config.endpoint)) {
+      let gpuName: string | null = null;
+      try {
+        gpuName = pickGpu(await getGpuStats())?.name ?? null;
+      } catch {
+        // Best-effort; the columns simply stay blank without a sampler.
+      }
+      if (gpuName) {
+        gpuSampler = setInterval(() => {
+          void getGpuStats()
+            .then((stats) => {
+              const g = stats.find((s) => s.name === gpuName);
+              if (!g) return;
+              gpuPeakUsed = Math.max(gpuPeakUsed, g.memoryUsedBytes);
+              gpuTotal = g.memoryTotalBytes || gpuTotal;
+              if (g.utilizationPercent !== null) utilSamples.push(g.utilizationPercent);
+            })
+            .catch(() => undefined);
+        }, 1000);
+      }
+    }
+
     // One streamed generation per scenario at its fixed temperature.
     const acc = new MetricsAccumulator();
     acc.start();
@@ -134,6 +163,11 @@ export async function runScenarioSuite(
       result.error = err instanceof Error ? err.message : String(err);
       update();
       continue;
+    } finally {
+      if (gpuSampler) {
+        clearInterval(gpuSampler);
+        gpuSampler = null;
+      }
     }
 
     // Memory / GPU split (Ollama only; blank on other engines).
@@ -148,7 +182,15 @@ export async function runScenarioSuite(
     } catch {
       // Memory stats are best-effort; never fail a scenario over them.
     }
-    result.efficiency = efficiencyRatio(result.tps, result.vramBytes);
+    // Fill from the local OS sampler when the engine API exposed nothing.
+    if (result.memoryBytes === null) {
+      result.memoryBytes = gpuPeakUsed > 0 ? gpuPeakUsed : null;
+      result.gpuPercent =
+        utilSamples.length > 0
+          ? utilSamples.reduce((a, b) => a + b, 0) / utilSamples.length
+          : null;
+    }
+    result.efficiency = efficiencyRatio(result.tps, result.vramBytes ?? result.memoryBytes);
     update();
 
     if (!opts.enableJudge || signal?.aborted) continue;
