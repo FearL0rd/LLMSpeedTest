@@ -90,7 +90,7 @@ function blankResult(def: ScenarioDef): ScenarioResult {
  */
 export async function runScenarioSuite(
   config: StreamConfig,
-  opts: { judgedBy?: string; judgedEndpoint?: string; enableJudge: boolean },
+  opts: { judgedBy?: string; judgedEndpoint?: string; judgedApiKey?: string; enableJudge: boolean },
   handlers: ScenarioSuiteHandlers = {},
   signal?: AbortSignal,
 ): Promise<ScenarioSuiteResult> {
@@ -210,6 +210,7 @@ export async function runScenarioSuite(
           ...config,
           // Judge can target a different OpenAI-compatible server; blank = same.
           endpoint: opts.judgedEndpoint?.trim() || config.endpoint,
+          apiKey: opts.judgedApiKey?.trim() || config.apiKey,
           model: result.judgeModel,
           systemPrompt,
           prompt,

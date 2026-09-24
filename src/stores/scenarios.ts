@@ -10,19 +10,30 @@ import { useBenchmarkStore } from './benchmark';
 
 const PREFS_KEY = 'llm-speedtest.scenarios.v1';
 
-function loadPrefs(): { judgeEnabled: boolean; judgeModel: string; judgeEndpoint: string } {
+function loadPrefs(): {
+  judgeEnabled: boolean;
+  judgeModel: string;
+  judgeEndpoint: string;
+  judgeApiKey: string;
+} {
   try {
     const raw = localStorage.getItem(PREFS_KEY);
-    if (!raw) return { judgeEnabled: false, judgeModel: '', judgeEndpoint: '' };
+    if (!raw) return { judgeEnabled: false, judgeModel: '', judgeEndpoint: '', judgeApiKey: '' };
     const parsed: unknown = JSON.parse(raw);
-    const p = parsed as { judgeEnabled?: unknown; judgeModel?: unknown; judgeEndpoint?: unknown };
+    const p = parsed as {
+      judgeEnabled?: unknown;
+      judgeModel?: unknown;
+      judgeEndpoint?: unknown;
+      judgeApiKey?: unknown;
+    };
     return {
       judgeEnabled: p?.judgeEnabled === true,
       judgeModel: typeof p?.judgeModel === 'string' ? p.judgeModel : '',
       judgeEndpoint: typeof p?.judgeEndpoint === 'string' ? p.judgeEndpoint : '',
+      judgeApiKey: typeof p?.judgeApiKey === 'string' ? p.judgeApiKey : '',
     };
   } catch {
-    return { judgeEnabled: false, judgeModel: '', judgeEndpoint: '' };
+    return { judgeEnabled: false, judgeModel: '', judgeEndpoint: '', judgeApiKey: '' };
   }
 }
 
@@ -83,7 +94,7 @@ export const useScenarioStore = defineStore('scenarios', () => {
     try {
       suiteResult.value = await runScenarioSuite(
         { ...bench.config },
-        { enableJudge: prefs.judgeEnabled, judgedBy: prefs.judgeModel, judgedEndpoint: prefs.judgeEndpoint },
+        { enableJudge: prefs.judgeEnabled, judgedBy: prefs.judgeModel, judgedEndpoint: prefs.judgeEndpoint, judgedApiKey: prefs.judgeApiKey },
         {
           onProgress: (label) => {
             progressLabel.value = label;

@@ -99,6 +99,15 @@ async function exportResult(format: 'json' | 'csv' | 'md'): Promise<void> {
           :disabled="running"
           data-testid="judge-endpoint"
         />
+        <input
+          v-if="prefs.judgeEnabled"
+          v-model="prefs.judgeApiKey"
+          class="judge-model"
+          type="password"
+          placeholder="Judge API key (blank = same as connection)"
+          :disabled="running"
+          data-testid="judge-api-key"
+        />
       </div>
       <p v-if="prefs.judgeEnabled && useSameModel" class="hint" data-testid="self-judge-hint">
         No judge model set — the model under test grades its own answers. Prefer a strong
