@@ -44,6 +44,7 @@ export interface ScenarioSuiteResult {
   endpoint: string;
   judged: boolean;
   judgeModel: string | null;
+  judgeEndpoint: string | null;
   startedAt: number;
   /** Mean KPI across scored scenarios. */
   overallKpi: number | null;
@@ -89,7 +90,7 @@ function blankResult(def: ScenarioDef): ScenarioResult {
  */
 export async function runScenarioSuite(
   config: StreamConfig,
-  opts: { judgedBy?: string; enableJudge: boolean },
+  opts: { judgedBy?: string; judgedEndpoint?: string; enableJudge: boolean },
   handlers: ScenarioSuiteHandlers = {},
   signal?: AbortSignal,
 ): Promise<ScenarioSuiteResult> {
@@ -207,6 +208,8 @@ export async function runScenarioSuite(
       await streamCompletion(
         {
           ...config,
+          // Judge can target a different OpenAI-compatible server; blank = same.
+          endpoint: opts.judgedEndpoint?.trim() || config.endpoint,
           model: result.judgeModel,
           systemPrompt,
           prompt,
@@ -243,6 +246,7 @@ export async function runScenarioSuite(
     endpoint: config.endpoint,
     judged: opts.enableJudge,
     judgeModel: opts.enableJudge ? (opts.judgedBy?.trim() || config.model) : null,
+    judgeEndpoint: opts.enableJudge ? (opts.judgedEndpoint?.trim() || config.endpoint) : null,
     startedAt: Date.now(),
     overallKpi: kpis.length > 0 ? kpis.reduce((a, b) => a + b, 0) / kpis.length : null,
     results,

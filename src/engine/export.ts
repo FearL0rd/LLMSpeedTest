@@ -79,7 +79,9 @@ export function scenariosToMarkdown(result: ScenarioSuiteResult): string {
   const headline =
     `# Scenario Benchmark — ${result.model}\n\n` +
     `endpoint: ${result.endpoint}` +
-    (result.judgeModel ? ` · judged by ${result.judgeModel}` : ' · quality scoring: off') +
+    (result.judgeModel
+      ? ` · judged by ${result.judgeModel} (${result.judgeEndpoint})`
+      : ' · quality scoring: off') +
     (result.overallKpi !== null ? `\n\n**Overall KPI: ${result.overallKpi.toFixed(1)} / 100**` : '') +
     `\n\n| scenario | temp | gen t/s | pp t/s | ttft (ms) | total (ms) | tokens | memory | gpu % | t/s per GB | kpi |\n` +
     `|:---------|-----:|--------:|-------:|----------:|-----------:|-------:|-------:|------:|-----------:|----:|`;

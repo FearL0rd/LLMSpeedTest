@@ -10,26 +10,26 @@ import { useBenchmarkStore } from './benchmark';
 
 const PREFS_KEY = 'llm-speedtest.scenarios.v1';
 
-function loadPrefs(): { judgeEnabled: boolean; judgeModel: string } {
+function loadPrefs(): { judgeEnabled: boolean; judgeModel: string; judgeEndpoint: string } {
   try {
     const raw = localStorage.getItem(PREFS_KEY);
-    if (!raw) return { judgeEnabled: false, judgeModel: '' };
+    if (!raw) return { judgeEnabled: false, judgeModel: '', judgeEndpoint: '' };
     const parsed: unknown = JSON.parse(raw);
-    const p = parsed as { judgeEnabled?: unknown; judgeModel?: unknown };
+    const p = parsed as { judgeEnabled?: unknown; judgeModel?: unknown; judgeEndpoint?: unknown };
     return {
       judgeEnabled: p?.judgeEnabled === true,
       judgeModel: typeof p?.judgeModel === 'string' ? p.judgeModel : '',
+      judgeEndpoint: typeof p?.judgeEndpoint === 'string' ? p.judgeEndpoint : '',
     };
   } catch {
-    return { judgeEnabled: false, judgeModel: '' };
+    return { judgeEnabled: false, judgeModel: '', judgeEndpoint: '' };
   }
 }
 
 export const useScenarioStore = defineStore('scenarios', () => {
   const bench = useBenchmarkStore();
 
-  const { judgeEnabled, judgeModel } = loadPrefs();
-  const prefs = reactive({ judgeEnabled, judgeModel });
+  const prefs = reactive(loadPrefs());
   const running = ref(false);
   const progressLabel = ref('');
   const liveAnswer = ref('');
@@ -83,7 +83,7 @@ export const useScenarioStore = defineStore('scenarios', () => {
     try {
       suiteResult.value = await runScenarioSuite(
         { ...bench.config },
-        { enableJudge: prefs.judgeEnabled, judgedBy: prefs.judgeModel },
+        { enableJudge: prefs.judgeEnabled, judgedBy: prefs.judgeModel, judgedEndpoint: prefs.judgeEndpoint },
         {
           onProgress: (label) => {
             progressLabel.value = label;

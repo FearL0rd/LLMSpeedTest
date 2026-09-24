@@ -90,6 +90,15 @@ async function exportResult(format: 'json' | 'csv' | 'md'): Promise<void> {
           :disabled="running"
           data-testid="judge-model"
         />
+        <input
+          v-if="prefs.judgeEnabled"
+          v-model="prefs.judgeEndpoint"
+          class="judge-model"
+          type="text"
+          placeholder="Judge server (blank = same server)"
+          :disabled="running"
+          data-testid="judge-endpoint"
+        />
       </div>
       <p v-if="prefs.judgeEnabled && useSameModel" class="hint" data-testid="self-judge-hint">
         No judge model set — the model under test grades its own answers. Prefer a strong
@@ -171,7 +180,9 @@ async function exportResult(format: 'json' | 'csv' | 'md'): Promise<void> {
           Overall KPI {{ overallKpi.toFixed(1) }}
         </span>
         <span class="chip">{{ suiteResult.model }}</span>
-        <span v-if="suiteResult.judgeModel" class="chip dim">judged by {{ suiteResult.judgeModel }}</span>
+        <span v-if="suiteResult.judgeModel" class="chip dim">
+          judged by {{ suiteResult.judgeModel }} · {{ suiteResult.judgeEndpoint }}
+        </span>
         <span v-else class="chip dim">quality scoring off</span>
       </div>
 
