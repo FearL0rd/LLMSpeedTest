@@ -1,6 +1,6 @@
 {
   "name": "llm-speedtest",
-  "version": "0.1.0",
+  "version": "0.1.8",
   "description": "Local LLM performance benchmarking tool",
   "private": true,
   "type": "module",
