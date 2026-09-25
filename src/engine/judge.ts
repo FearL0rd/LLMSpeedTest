@@ -19,8 +19,9 @@ export function buildJudgePrompt(def: ScenarioDef, answer: string): {
       'explanations.',
     prompt:
       `Scenario: ${def.name}\n` +
-      `Rubric (score each dimension 0-100):\n${rubric}\n\n` +
       `Answer to evaluate:\n"""\n${answer}\n"""\n\n` +
+      `Rubric (score each dimension 0-100):\n${rubric}\n\n` +
+      'Do not explain. Do not restate the task. Do not describe your reasoning. /no_think\n' +
       'Respond with exactly this shape, nothing else:\n' +
       '{"scores": {' + def.dimensions.map((d) => `"${d.key}": 0`).join(', ') + '}}',
   };
@@ -85,8 +86,33 @@ function tryParseScores(
 }
 
 /**
- * Parse judge JSON into validated per-dimension scores (integers clamped 0-100).
- * Returns null when the output is unparseable or missing required dimensions.
+ * Fallback for judges that ignore the JSON instruction and score in prose
+ * (e.g. "- correctness: 85", "tool_selection: 90/100"). Matches every
+ * dimension key followed by `:`/`=` and a 0-100 number; rubric echoes like
+ * "correctness (40%)" don't match (no colon directly after the key, and
+ * weight numbers are followed by '%'). Returns null unless ALL dimensions
+ * are found.
+ */
+function parsePlainTextScores(
+  judgeOutput: string,
+  def: ScenarioDef,
+): Record<string, number> | null {
+  const scores: Record<string, number> = {};
+  for (const d of def.dimensions) {
+    // Allow separator variants between camelCase words: tool_selection, "tool selection".
+    const keyPattern = d.key.replace(/[A-Z]/g, (m) => `[\\s_-]*${m.toLowerCase()}`);
+    const re = new RegExp(`${keyPattern}\\s*[:=]\\s*(\\d{1,3})(?!\\s*%)`, 'i');
+    const match = judgeOutput.match(re);
+    if (!match) return null;
+    scores[d.key] = Math.max(0, Math.min(100, Number.parseInt(match[1], 10)));
+  }
+  return scores;
+}
+
+/**
+ * Parse judge output into validated per-dimension scores (integers clamped
+ * 0-100). Tries JSON first (fenced, embedded, key variants), then plain-text
+ * "key: number" scores. Returns null when unparseable or incomplete.
  */
 export function parseJudgeScores(
   judgeOutput: string,
@@ -96,5 +122,5 @@ export function parseJudgeScores(
     const scores = tryParseScores(candidate, def);
     if (scores) return scores;
   }
-  return null;
+  return parsePlainTextScores(judgeOutput, def);
 }

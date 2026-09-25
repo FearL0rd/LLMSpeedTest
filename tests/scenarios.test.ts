@@ -129,6 +129,49 @@ describe('judge prompts and parsing', () => {
       errorHandling: 65,
     });
   });
+
+  it('parses plain-text scores from judges that ignore the JSON instruction', () => {
+    const code = SCENARIOS[1];
+    const out = parseJudgeScores(
+      'We need to evaluate the provided code against the rubric.\n' +
+        '- correctness: 85\n- quality: 90\n- performance: 70\n- completeness: 60',
+      code,
+    );
+    expect(out).toEqual({
+      correctness: 85,
+      quality: 90,
+      performance: 70,
+      completeness: 60,
+    });
+  });
+
+  it('parses scores written as N/100', () => {
+    const code = SCENARIOS[1];
+    const out = parseJudgeScores(
+      'correctness: 85/100, quality: 90/100, performance: 70/100, completeness: 60/100',
+      code,
+    );
+    expect(out).toEqual({
+      correctness: 85,
+      quality: 90,
+      performance: 70,
+      completeness: 60,
+    });
+  });
+
+  it('does not mistake rubric echoes (weight percentages) for scores', () => {
+    const out = parseJudgeScores(
+      '- correctness (40%): State management clear\n- toolSelection (35%): ok',
+      agent,
+    );
+    expect(out).toBeNull();
+  });
+
+  it('puts the answer before the JSON instruction with a no-think switch', () => {
+    const { prompt } = buildJudgePrompt(agent, 'the plan');
+    expect(prompt.indexOf('the plan')).toBeLessThan(prompt.indexOf('Respond with exactly'));
+    expect(prompt).toContain('/no_think');
+  });
 });
 
 describe('pickGpu (local GPU sampling)', () => {
