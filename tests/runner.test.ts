@@ -114,6 +114,8 @@ describe('runSuite', () => {
     expect(pp.stats.ppTps?.mean).toBeGreaterThan(0);
     expect(pp.stats.estPptMs?.mean).toBeGreaterThan(0);
 
+    expect(calls.filter((c) => c.label === 'gpu-warmup')).toHaveLength(0);
+
     // Coherence check ran against the synthetic executor ("ok" contains no 4).
     expect(result.coherenceOk).toBe(false);
 
@@ -231,6 +233,20 @@ describe('runSuite', () => {
     expect(c2.totalTps?.mean).toBeGreaterThan(0);
     // Measured runs: 2 iterations x 2 concurrent requests (warmup discarded).
     expect(c2.runs).toHaveLength(suite.runs * 2);
+  }, 30000);
+
+  it('fires GPU warmup requests when warmupCards is on', async () => {
+    const { executor, calls } = makeScriptedExecutor(50);
+    await runSuite(
+      { ...baseConfig, warmupCards: true, latencyMode: 'none' },
+      { ...smallSuite, coherence: false },
+      {},
+      undefined,
+      executor,
+    );
+    const warm = calls.filter((c) => c.label === 'gpu-warmup');
+    expect(warm.length).toBeGreaterThan(0);
+    expect(warm.length).toBeLessThanOrEqual(3);
   }, 30000);
 
   it('excludes cached prefix tokens from pp rates when measuring prefix caching', async () => {

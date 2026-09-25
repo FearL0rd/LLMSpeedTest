@@ -6,7 +6,7 @@
  */
 import { MetricsAccumulator } from './metrics';
 import { applyLatencyAdjustment } from './runner';
-import { measureBaselineLatency } from './latency';
+import { measureBaselineLatency, warmUpCards } from './latency';
 import { streamCompletion } from './streaming';
 import { findModelMemory, getGpuStats, isSameHost, pickGpu, probeEndpoint } from './probe';
 import { SCENARIOS, efficiencyRatio, stripThink, weightedKpi, type ScenarioDef } from './scenarios';
@@ -96,6 +96,11 @@ export async function runScenarioSuite(
 ): Promise<ScenarioSuiteResult> {
   const results = SCENARIOS.map(blankResult);
   const update = (): void => handlers.onScenarios?.(results.map((r) => ({ ...r })));
+
+  if (config.warmupCards) {
+    handlers.onProgress?.('Warming up GPUs…');
+    await warmUpCards(config, signal);
+  }
 
   handlers.onProgress?.('Measuring baseline latency…');
   const latencyMs = await measureBaselineLatency(config).catch(() => null);

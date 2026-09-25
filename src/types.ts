@@ -16,6 +16,8 @@ export interface StreamConfig {
   hardware?: string;
   /** Latency baseline measurement mode for est_ppt / prompt-processing speed. */
   latencyMode?: 'generation' | 'api' | 'none';
+  /** Warm up GPU clocks with a short discarded generation burst before measuring. */
+  warmupCards?: boolean;
   /** Server-side output floor (exact-length runs; supported: vLLM, llama.cpp). */
   minTokens?: number;
   /** Ignore end-of-sequence for fixed-length generation (supported: vLLM, llama.cpp). */

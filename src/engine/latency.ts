@@ -29,6 +29,26 @@ export async function measureBaselineLatency(
   }
 }
 
+/**
+ * Warm up the GPU cards before measuring: a short burst of discarded
+ * generations (GPUs idle at low clocks; the first measured requests would
+ * otherwise run unboosted). Unique prompts so the server's prefix cache
+ * can't skip the work.
+ */
+export async function warmUpCards(config: StreamConfig, signal?: AbortSignal): Promise<void> {
+  const t0 = performance.now();
+  for (let i = 0; i < 3 && performance.now() - t0 < 3000 && !signal?.aborted; i++) {
+    const probe: StreamConfig = {
+      ...config,
+      prompt: `Warm-up request ${i} ${Math.random().toString(36).slice(2, 8)}. Count slowly from one to ten.`,
+      maxTokens: 64,
+      minTokens: undefined,
+      ignoreEos: undefined,
+    };
+    await probeOnce(probe, () => {}, signal).catch(() => undefined);
+  }
+}
+
 async function measureApiLatency(config: StreamConfig, signal?: AbortSignal): Promise<number | null> {
   const url = `${buildRequestUrl(config).replace(/\/chat\/completions$/, '')}/models`;
   const headers: Record<string, string> = { Accept: 'application/json' };

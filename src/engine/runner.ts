@@ -161,6 +161,34 @@ export async function coherenceCheck(
   }
 }
 
+/** Short discarded generation burst so GPU clocks are boosted before measuring. */
+export async function warmUpCardsWith(
+  config: StreamConfig,
+  executor: RunExecutor,
+  signal?: AbortSignal,
+): Promise<void> {
+  const t0 = performance.now();
+  for (let i = 0; i < 3 && performance.now() - t0 < 3000 && !signal?.aborted; i++) {
+    try {
+      await executor(
+        {
+          label: 'gpu-warmup',
+          config: {
+            ...config,
+            prompt: `Warm-up request ${i} ${Math.random().toString(36).slice(2, 8)}. Count slowly from one to ten.`,
+            maxTokens: 64,
+            minTokens: undefined,
+            ignoreEos: undefined,
+          },
+        },
+        signal,
+      );
+    } catch {
+      break;
+    }
+  }
+}
+
 /** Baseline latency from 1-token generation probes (first one discarded). */
 export async function measureLatencyWith(
   config: StreamConfig,
@@ -234,6 +262,11 @@ export async function runSuite(
     }
   }
   const report = (label: string) => handlers.onProgress?.({ done: progress.done, total: estimatedTotal, label });
+
+  if (config.warmupCards) {
+    report('Warming up GPUs');
+    await warmUpCardsWith(config, executor, signal);
+  }
 
   // Latency baseline via the same executor keeps tests hermetic.
   const latencyMs =

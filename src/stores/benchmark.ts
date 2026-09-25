@@ -2,7 +2,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { MetricsAccumulator, runLabel } from '../engine/metrics';
 import { applyLatencyAdjustment } from '../engine/runner';
-import { measureBaselineLatency } from '../engine/latency';
+import { measureBaselineLatency, warmUpCards } from '../engine/latency';
 import { streamCompletion } from '../engine/streaming';
 import {
   detectEngine,
@@ -38,6 +38,7 @@ const CONFIG_FIELDS = [
   'hardware',
   'latencyMode',
   'includeUsage',
+  'warmupCards',
 ] as const;
 
 const LATENCY_MODES = ['generation', 'api', 'none'];
@@ -63,8 +64,8 @@ export function parseStoredConfig(raw: string | null): Partial<StreamConfig> {
     if (value === undefined || value === null) continue;
     if (key === 'temperature' || key === 'maxTokens') {
       if (typeof value === 'number' && Number.isFinite(value) && value > 0) out[key] = value;
-    } else if (key === 'includeUsage') {
-      out.includeUsage = Boolean(value);
+    } else if (key === 'includeUsage' || key === 'warmupCards') {
+      out[key] = Boolean(value);
     } else if (key === 'latencyMode') {
       if (typeof value === 'string' && LATENCY_MODES.includes(value)) out.latencyMode = value;
     } else {
@@ -98,6 +99,7 @@ function defaultConfig(): StreamConfig {
     hardware: '',
     latencyMode: 'generation',
     includeUsage: true,
+    warmupCards: true,
   };
 }
 
@@ -193,6 +195,11 @@ export const useBenchmarkStore = defineStore('benchmark', () => {
     liveSamples.value = [];
     liveTtftMs.value = null;
     elapsedMs.value = 0;
+
+    if (snapshot.warmupCards) {
+      await warmUpCards(snapshot);
+      if (token !== runToken) return;
+    }
 
     // Baseline latency probe (network + server overhead) for est_ppt / pp tps.
     latencyMs.value = await measureBaselineLatency(snapshot);

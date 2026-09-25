@@ -160,6 +160,11 @@ const hardwareSummary = computed(() =>
       <span>Request usage counts (stream_options.include_usage)</span>
     </label>
 
+    <label class="check">
+      <input v-model="config.warmupCards" type="checkbox" data-testid="warmup-cards" />
+      <span>Warm up GPUs before measuring (short discarded burst)</span>
+    </label>
+
     <label class="field">
       <span>Latency Baseline <em>(for est_ppt / prompt-processing speed)</em></span>
       <select v-model="config.latencyMode" data-testid="latency-mode">

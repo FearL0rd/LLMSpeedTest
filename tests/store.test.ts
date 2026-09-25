@@ -14,6 +14,7 @@ describe('parseStoredConfig (connection settings persistence)', () => {
       temperature: 0.2,
       maxTokens: 512,
       includeUsage: false,
+      warmupCards: false,
       latencyMode: 'api',
     });
     expect(parseStoredConfig(saved)).toEqual({
@@ -27,6 +28,7 @@ describe('parseStoredConfig (connection settings persistence)', () => {
       temperature: 0.2,
       maxTokens: 512,
       includeUsage: false,
+      warmupCards: false,
       latencyMode: 'api',
     });
   });
