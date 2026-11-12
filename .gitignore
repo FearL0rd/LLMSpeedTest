@@ -1,6 +1,7 @@
 node_modules/
 dist/
 src-tauri/target/
+appimage-fixed/
 src-tauri/gen/
 .DS_Store
 *.log

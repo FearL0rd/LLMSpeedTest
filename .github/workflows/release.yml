@@ -48,6 +48,22 @@ jobs:
           releaseDraft: true
           prerelease: false
 
+      # tauri-action uploads the AppImage before this step. linuxdeploy packs
+      # AppRun.wrapped as mode 0770, which the catalog test (a different user)
+      # cannot execute. Repack, then replace that asset.
+      - name: Repack AppImage for other users
+        if: matrix.platform == 'ubuntu-22.04'
+        run: bash scripts/repack-appimage.sh
+
+      - name: Replace AppImage on the release
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: appimage-fixed/*.AppImage
+
       - name: Zip portable Windows exe
         if: matrix.platform == 'windows-latest'
         shell: pwsh
